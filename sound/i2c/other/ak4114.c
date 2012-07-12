@@ -153,7 +153,7 @@ static void ak4114_init_regs(struct ak4114 *chip)
 void snd_ak4114_reinit(struct ak4114 *chip)
 {
 	if (atomic_inc_return(&chip->wq_processing) == 1)
-		cancel_delayed_work_sync(&chip->work);
+		cancel_delayed_work(&chip->work);
 	ak4114_init_regs(chip);
 	/* bring up statistics / event queing */
 	if (atomic_dec_and_test(&chip->wq_processing))

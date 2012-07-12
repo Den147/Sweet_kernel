@@ -1380,12 +1380,12 @@ static int __devinit smb345_probe(struct i2c_client *client,
 
 	smb345_wq = create_singlethread_workqueue("smb345_wq");
 
-	INIT_DELAYED_WORK_DEFERRABLE(&charger->wireless_isr_work,
-		wireless_isr_work_function);
-	INIT_DELAYED_WORK_DEFERRABLE(&charger->wireless_det_work,
-		wireless_det_work_function);
-	INIT_DELAYED_WORK_DEFERRABLE(&charger->wireless_set_current_work,
-		wireless_set_current_function);
+	INIT_DEFERRABLE_WORK(&charger->wireless_isr_work,
+			     wireless_isr_work_function);
+	INIT_DEFERRABLE_WORK(&charger->wireless_det_work,
+			     wireless_det_work_function);
+	INIT_DEFERRABLE_WORK(&charger->wireless_set_current_work,
+			     wireless_set_current_function);
 
 	wake_lock_init(&charger_wakelock, WAKE_LOCK_SUSPEND,
 			"charger_configuration");

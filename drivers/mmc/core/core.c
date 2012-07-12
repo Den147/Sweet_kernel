@@ -308,9 +308,8 @@ void mmc_start_delayed_bkops(struct mmc_card *card)
 	 * it was removed from the queue work but not started yet
 	 */
 	card->bkops_info.cancel_delayed_work = false;
-	queue_delayed_work(system_nrt_wq, &card->bkops_info.dw,
-			   msecs_to_jiffies(
-				   card->bkops_info.delay_ms));
+	schedule_delayed_work(&card->bkops_info.dw,
+			   msecs_to_jiffies(card->bkops_info.delay_ms));
 }
 EXPORT_SYMBOL(mmc_start_delayed_bkops);
 
@@ -409,8 +408,7 @@ void mmc_start_bkops(struct mmc_card *card, bool from_exception)
 	mmc_card_set_doing_bkops(card);
 	pr_debug("%s: %s: starting the polling thread\n",
 		 mmc_hostname(card->host), __func__);
-	queue_work(system_nrt_wq,
-		   &card->bkops_info.poll_for_completion);
+	schedule_work(&card->bkops_info.poll_for_completion);
 
 out:
 	mmc_release_host(card->host);
