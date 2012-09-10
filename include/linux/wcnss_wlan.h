@@ -62,6 +62,8 @@ void wcnss_reset_intr(void);
 int wcnss_cold_boot_done(void);
 void wcnss_riva_dump_pmic_regs(void);
 int wcnss_wlan_iris_xo_mode(void);
+void *wcnss_prealloc_get(unsigned int size);
+int wcnss_prealloc_put(void *ptr);
 
 #define wcnss_wlan_get_drvdata(dev) dev_get_drvdata(dev)
 #define wcnss_wlan_set_drvdata(dev, data) dev_set_drvdata((dev), (data))
