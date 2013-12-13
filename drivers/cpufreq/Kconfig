@@ -17,8 +17,19 @@ config CPU_FREQ
 
 if CPU_FREQ
 
+config SCHED_FREQ_INPUT
+	bool "Scheduler inputs to cpufreq governor"
+	depends on SMP && FAIR_GROUP_SCHED
+	help
+	  This option enables support for scheduler based CPU utilization
+	  calculations which may then be used by any cpufreq governor. The
+	  scheduler keeps track of "recent" cpu demand of tasks, which can
+	  help determine need for changing frequency well in advance of what
+	  a governor would have been able to detect on its own.
+
 config CPU_BOOST
 	tristate "Event base short term CPU freq boost"
+	depends on SCHED_FREQ_INPUT
 	help
 	  This driver boosts the frequency of one or more CPUs based on
 	  various events that might occur in the system. As of now, the
