@@ -160,7 +160,7 @@ static unsigned long get_slowest_cpu_rate(void) {
 	return slow_rate;
 }
 
-static void mpdec_cpu_up(int cpu) {
+static void __cpuinit mpdec_cpu_up(int cpu) {
 	if (!cpu_online(cpu)) {
 		mutex_lock(&per_cpu(msm_mpdec_cpudata, cpu).hotplug_mutex);
 		cpu_up(cpu);
@@ -345,7 +345,7 @@ static int update_cpu_min_freq(struct cpufreq_policy *cpu_policy,
 	return ret;
 }
 
-static void unboost_cpu(int cpu) {
+static void __cpuinit unboost_cpu(int cpu) {
 /* we don't use mpdec's cpu up/down funcs here to control offline, to be
  * unboosted, cpus to avoid influencing mpdec's stats */
 	struct cpufreq_policy *cpu_policy = NULL;
