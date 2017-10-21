@@ -17,6 +17,16 @@ config CPU_FREQ
 
 if CPU_FREQ
 
+config CPU_BOOST
+	tristate "Event base short term CPU freq boost"
+	help
+	  This driver boosts the frequency of one or more CPUs based on
+	  various events that might occur in the system. As of now, the
+	  events it reacts to are:
+	  - Migration of important threads from one CPU to another.
+	  - Touchscreen, touchpad, keypad input events.
+ 	  If in doubt, say N.
+
 config CPU_FREQ_TABLE
 	tristate
 

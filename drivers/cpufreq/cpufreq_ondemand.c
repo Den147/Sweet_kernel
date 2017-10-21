@@ -44,6 +44,13 @@
 #define MAX_FREQUENCY_UP_THRESHOLD		(100)
 #define MIN_FREQUENCY_DOWN_DIFFERENTIAL		(1)
 
+#ifndef CONFIG_CPU_BOOST
+#define DEF_FREQUENCY_SYNCHRONIZATION		(1)
+#else
+#define DEF_FREQUENCY_SYNCHRONIZATION		(0)
+#endif
+
+
 /*
  * The polling frequency of this governor depends on the capability of
  * the processor. Default polling frequency is 1000 times the transition
@@ -124,6 +131,12 @@ static unsigned int dbs_enable;	/* number of CPUs using this policy */
 static DEFINE_MUTEX(dbs_mutex);
 
 static struct workqueue_struct *dbs_wq;
+
+#ifndef CONFIG_CPU_BOOST
+#define DEF_FREQUENCY_SYNCHRONIZATION		(1)
+#else
+#define DEF_FREQUENCY_SYNCHRONIZATION		(0)
+#endif
 
 struct dbs_work_struct {
 	struct work_struct work;

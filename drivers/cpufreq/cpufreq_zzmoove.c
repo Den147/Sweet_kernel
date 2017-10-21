@@ -278,6 +278,12 @@ static char custom_profile[20] = "custom";			// ZZ: name to show in sysfs if any
 #endif /* ENABLE_HOTPLUGGING */
 #endif /* ENABLE_MUSIC_LIMITS */
 
+#ifndef CONFIG_CPU_BOOST
+#define DEF_FREQUENCY_SYNCHRONIZATION		(1)
+#else
+#define DEF_FREQUENCY_SYNCHRONIZATION		(0)
+#endif
+
 // ZZ: Sampling Down Momentum variables
 static unsigned int min_sampling_rate;				// ZZ: minimal possible sampling rate
 static unsigned int orig_sampling_down_factor;			// ZZ: for saving previously set sampling down factor
