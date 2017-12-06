@@ -38,10 +38,10 @@ struct snd_ctrl_data {
 	struct snd_soc_codec *codec;
 	struct list_head member;
 
-	/* Control data's name */
+	/* Name of control data */
 	const char *name;
 
-	/* Basic audio input lines */
+	/* Basic audio output lines */
 	struct snd_ctrl_lines lines;
 
 	/* Data-specific control flags */

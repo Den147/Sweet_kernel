@@ -21,7 +21,7 @@
 
 #define CTRL_NAME_LEN	32
 
-/* Read/write flags for __snd_ctrl_data_global() */
+/* Read/write flags for snd_ctrl_data_ready() call */
 #define __WL		(0)
 #define __RL		(1)
 
@@ -33,6 +33,15 @@
 #define write_line(name, val)	\
 	ctrl_data->write(ctrl_data->codec, ctrl_data->lines.name##_line, (val))
 
+/*
+ * Local control stats that are likely to be used onto target control data.
+ *
+ * The idea is to fill one of the expected control data with an appropriate
+ * information including target sound lines and default sound gains. This way
+ * it is possible to setup the default sound gain of the whole most-used dev
+ * map via either Open Firmware or platform data, omitting the setting by
+ * initramfs or other user-space service.
+ */
 struct ctrl_stats {
 	struct snd_ctrl_pdata data;
 
@@ -46,52 +55,55 @@ struct ctrl_stats {
 };
 
 /*
- * Local sound control data which will be used as a source of
- * default values as soon as expected codec data is registered.
+ * Local sound control data which will be used as a source of default
+ * values as soon as expected sound control data will be registered.
  */
 static struct ctrl_stats *stats;
 
 /* Global sound control data which is used in all sysfs nodes */
 static struct snd_ctrl_data *ctrl_data;
 
-/* Kernel object where sysfs groups are handled */
+/* Kernel object where sysfs groups are proceed */
 static struct kobject *snd_ctrl_kobj;
 
-/* Mutex that protects control data state switch */
-static DEFINE_MUTEX(snd_ctrl_mutex);
+/* Mutex that protects access to linked list below */
+static DEFINE_MUTEX(list_mutex);
 
-/* List of conjuncted codecs */
-static LIST_HEAD(codec_list);
+/* List of conjuncted control data */
+static LIST_HEAD(ctrl_list);
 
 /* Just prototypes. See the information below. */
 static inline bool snd_ctrl_data_global(struct snd_ctrl_data *snd_data);
 static inline bool snd_ctrl_data_global_rw(struct snd_ctrl_data *snd_data);
 static inline bool snd_ctrl_data_expected(struct snd_ctrl_data *snd_data);
-static inline int snd_ctrl_data_fill_of(struct snd_ctrl_data *snd_data);
+static inline int snd_ctrl_data_fill(struct snd_ctrl_data *snd_data);
 static struct snd_ctrl_data *find_ctrl_data(const char *ctrl_name);
 
 /**
- * snd_ctrl_register() - register a new sound control data.
+ * snd_ctrl_register() - register new sound control data.
  * @snd_data: pointer to sound control data.
  *
- * Tries to register a passed control data. If the passed control data is
- * incomplete or is already registered, an appropriate negative (-EINVAL)
- * will be returned.  If this is the first control data in a global codec
- * list, it will become a global one.
+ * Tries to register passed control data. If one is incomplete or is already
+ * registered, an appropriate negative will be returned. If this is the first
+ * control data in a global ctrl list, it will become a global one.
  *
- * Returns zero on success or -EINVAL on error.
+ * In case Open Firmware or platform data is used, hence one of the ctrl data
+ * is expected, this function will fill the target one with the values from
+ * OF/pdata source and immediately make it global, bypassing the queue.
+ *
+ * Returns zero on success or -EINVAL[-EEXIST] on error.
  */
 int snd_ctrl_register(struct snd_ctrl_data *snd_data)
 {
-	int err = -EEXIST;
-
-	/* Incomplete control data can not be registered */
-	if (IS_ERR_OR_NULL(snd_data) ||
-	    IS_ERR_OR_NULL(snd_data->name) ||
-	    IS_ERR_OR_NULL(snd_data->codec))
+	/* Incomplete control data cannot be registered */
+	if (IS_ERR_OR_NULL(snd_data))
+		return -EINVAL;
+	if (IS_ERR_OR_NULL(snd_data->name))
+		return -EINVAL;
+	if (IS_ERR_OR_NULL(snd_data->codec))
 		return -EINVAL;
 
-	/* Control data must have read function. Otherwise, it is useless */
+	/* Control data MUST have read function. Otherwise it is useless. */
 	if (IS_ERR_OR_NULL(snd_data->read))
 		return -EINVAL;
 
@@ -102,53 +114,51 @@ int snd_ctrl_register(struct snd_ctrl_data *snd_data)
 	 * will not cooperate with each other, so the deadlock is unlikely to
 	 * happen.
 	 */
-	mutex_lock(&snd_ctrl_mutex);
+	mutex_lock(&list_mutex);
 	/* Ensure that control data has not been already registered */
-	if (likely(!find_ctrl_data(snd_data->name))) {
-		err = 0;
-
-		list_add(&snd_data->member, &codec_list);
-		pr_debug("%s ctrl data was registered\n", snd_data->name);
-
-		/* Apply default values if this data is expected by OF */
-		if (likely(snd_ctrl_data_expected(snd_data))) {
-			err = snd_ctrl_data_fill_of(snd_data);
-			if (IS_ERR_VALUE(err))
-				pr_err("Unable to fulfill %s control data\n",
-					snd_data->name);
-		}
-
-		/*
-		 * Make the first passed control data global. It will become
-		 * the default controlled codec, and its sound gains will be
-		 * exported first.  A controlled codec can be changed later
-		 * via a corresponding sysfs node.
-		 */
-		if (list_is_singular(&codec_list)) {
-			ctrl_data = snd_data;
-			pr_info("New global ctrl data --> %s\n",
-				 ctrl_data->name);
-		}
+	if (unlikely(find_ctrl_data(snd_data->name))) {
+		mutex_unlock(&list_mutex);
+		return -EEXIST;
 	}
-	mutex_unlock(&snd_ctrl_mutex);
 
-	return err;
+	/* Add new control data to a global ctrl data list */
+	list_add(&snd_data->member, &ctrl_list);
+	pr_debug("%s ctrl data is registered\n", snd_data->name);
+
+	/* Apply default values if this data is expected by OF */
+	if (snd_ctrl_data_expected(snd_data) && snd_ctrl_data_fill(snd_data))
+		pr_err("Unable to fill %s ctrl data\n", snd_data->name);
+
+	/*
+	 * Make the first passed control data global.  It will become the
+	 * default controlled codec, and its sound gains will be exported
+	 * first. A controlled codec can be changed later via a corresponding
+	 * sysfs node. Also take expected codec into account.
+	 */
+	if (list_is_singular(&ctrl_list) || snd_ctrl_data_expected(snd_data)) {
+		ctrl_data = snd_data;
+		pr_info("New global ctrl data: %s\n", ctrl_data->name);
+	}
+	mutex_unlock(&list_mutex);
+
+	return 0;
 }
 EXPORT_SYMBOL_GPL(snd_ctrl_register);
 
 /**
- * snd_ctrl_unregister() - unregister a sound control data.
+ * snd_ctrl_unregister() - unregister sound control data.
  * @snd_data: pointer to sound control data.
  *
- * Tries to unregister a sound control data.  If the passed data is incomplete
- * or even has not been registered yet, the function will return early. If the
- * unregistered control data was a global one, the first codec in the list will
- * pretend to be a replacement.  In case there are no available codecs left,
- * global control data will be nulled.
+ * Tries to unregister passed control data. If one is incomplete or even has
+ * not been registered yet, this function will return early. If that ctrl data
+ * is a global one right now and is going to be unregistered, the first codec
+ * in the list will pretend to be a replacement. In case there are no available
+ * ctrl data left, global control data will be nulled, hence controlling will
+ * be disabled.
  */
 void snd_ctrl_unregister(struct snd_ctrl_data *snd_data)
 {
-	/* Incomplete control data can not be unregistered */
+	/* Incomplete control data cannot be unregistered */
 	if (IS_ERR_OR_NULL(snd_data) ||
 	    IS_ERR_OR_NULL(snd_data->name))
 		return;
@@ -157,51 +167,53 @@ void snd_ctrl_unregister(struct snd_ctrl_data *snd_data)
 	 * If the codec's control data somehow was not registered,
 	 * there is no point in continuing.
 	 */
-	mutex_lock(&snd_ctrl_mutex);
+	mutex_lock(&list_mutex);
 	if (unlikely(!find_ctrl_data(snd_data->name))) {
-		mutex_unlock(&snd_ctrl_mutex);
+		mutex_unlock(&list_mutex);
 		return;
 	}
 
-	list_del(&snd_data->member);
-	pr_debug("%s ctrl data was unregistered\n", snd_data->name);
+	/*
+	 * Remove control data from a global ctrl data list.
+	 * Also reinitialize the list to take advantage of list_empty() call.
+	 */
+	list_del_init(&snd_data->member);
+	pr_debug("%s ctrl data is unregistered\n", snd_data->name);
 
-	if (!list_empty(&codec_list)) {
+	if (!list_empty(&ctrl_list) && snd_ctrl_data_global(snd_data)) {
 		/*
 		 * Replace a global control data with the first in the list.
 		 * This way we will keep something under control unless all
-		 * control datas are unregistered.
+		 * control data are unregistered.
 		 */
-		if (snd_ctrl_data_global(snd_data)) {
-			ctrl_data = list_first_entry(&codec_list,
-					struct snd_ctrl_data, member);
-			pr_info("New global ctrl data --> %s\n",
-				 ctrl_data->name);
-		}
-	} else {
+		ctrl_data = list_first_entry(&ctrl_list,
+				struct snd_ctrl_data, member);
+		pr_info("New global ctrl data: %s\n", ctrl_data->name);
+	} else if (list_empty(&ctrl_list)) {
 		/*
-		 * When there is no any registered codec's control data, the
-		 * only option here is to completely remove any controlling
-		 * by nulling the global control data.
+		 * When there are no any registered control data, the only
+		 * option is to completely remove any controlling by nulling
+		 * the global control data.
 		 */
 		ctrl_data = NULL;
-		pr_debug("No available ctrl datas yet\n");
+		pr_debug("No available ctrl data yet\n");
 	}
-	mutex_unlock(&snd_ctrl_mutex);
+	mutex_unlock(&list_mutex);
 }
 EXPORT_SYMBOL_GPL(snd_ctrl_unregister);
 
 /**
- * snd_ctrl_data_handled() - check whether a passed control data is handled
- * right now.
+ * snd_ctrl_data_handled() - check whether passed control data is handled now.
  * @snd_data: pointer to sound control data.
  *
- * Checks the presence of controlled lines in a passed control data.  Ensures
- * that a passed control data and a global one are the same and have an ability
- * to write to.
+ * Checks the presence of controlled lines in passed control data. Ensures that
+ * passed control data and a global one are the same and have an ability to
+ * write to.
  */
 bool snd_ctrl_data_handled(struct snd_ctrl_data *snd_data)
 {
+	u32 ret = 0;
+
 	/*
 	 * Codec is considered as handled only if there is an ability to
 	 * write to it.
@@ -209,28 +221,31 @@ bool snd_ctrl_data_handled(struct snd_ctrl_data *snd_data)
 	if (!snd_ctrl_data_global_rw(snd_data))
 		return false;
 
-	/* At least one sound line must be fullfilled */
-	return (snd_data->lines.mic_line ||
-		snd_data->lines.cam_mic_line ||
-		snd_data->lines.speaker_l_line ||
-		snd_data->lines.speaker_r_line ||
-		snd_data->lines.headphone_l_line ||
-		snd_data->lines.headphone_r_line);
+	/* At least one sound line must be filled */
+	ret |= snd_data->lines.mic_line;
+	ret |= snd_data->lines.cam_mic_line;
+	ret |= snd_data->lines.speaker_l_line;
+	ret |= snd_data->lines.speaker_r_line;
+	ret |= snd_data->lines.headphone_l_line;
+	ret |= snd_data->lines.headphone_r_line;
+
+	return ret;
 }
 EXPORT_SYMBOL_GPL(snd_ctrl_data_handled);
 
 /**
- * find_ctrl_data() - search for a control data in a global codec list.
+ * find_ctrl_data() - search for control data in a global ctrl data list.
  * @ctrl_name: name of a target member.
  *
  * Returns target member structure if found or NULL to the contrary.
+ * ! This function MUST be called with list_mutex taken.
  */
 static struct snd_ctrl_data *find_ctrl_data(const char *ctrl_name)
 {
 	struct snd_ctrl_data *entry;
 
 	/* Return early if there is nothing to search */
-	if (IS_ERR_OR_NULL(ctrl_name) || list_empty(&codec_list))
+	if (list_empty(&ctrl_list) || IS_ERR_OR_NULL(ctrl_name))
 		return NULL;
 
 	/*
@@ -240,7 +255,7 @@ static struct snd_ctrl_data *find_ctrl_data(const char *ctrl_name)
 	 * However, there will be a mess if a giant number of codecs is
 	 * registered.
 	 */
-	list_for_each_entry(entry, &codec_list, member)
+	list_for_each_entry(entry, &ctrl_list, member)
 		if (!strnicmp(ctrl_name, entry->name, CTRL_NAME_LEN))
 			return entry;
 
@@ -248,17 +263,16 @@ static struct snd_ctrl_data *find_ctrl_data(const char *ctrl_name)
 }
 
 /**
- * snd_ctrl_data_expected() - check whether the passed control data is set
- * in open firmware.
+ * snd_ctrl_data_expected() - check if passed control data is set in OF/pdata.
  * @snd_data: pointer to sound control data.
  *
- * Compares the names of local (expected) control data from open firmware and
- * a passed one. Returns true if they are the same, false otherwise.  In case
+ * Compares the names of local (expected) control data from OF/pdata and a
+ * passed one. Returns true if they are the same, false otherwise. In case
  * local data is not initialized, it returns false too.
  */
 static inline bool snd_ctrl_data_expected(struct snd_ctrl_data *snd_data)
 {
-	/* Empty stats mean the absence of DT intercalation */
+	/* Empty stats mean the absence of OF/pdata intercalation */
 	if (IS_ERR_OR_NULL(stats))
 		return false;
 
@@ -266,16 +280,27 @@ static inline bool snd_ctrl_data_expected(struct snd_ctrl_data *snd_data)
 }
 
 /**
- * snd_ctrl_data_ready() - check whether there is a global control data.
+ * snd_ctrl_data_ready() - check whether there is global control data.
  * @read_only: ignore the absence of write call.
  *
- * Returns false if some of the critical parts of control data are empty.
- * Otherwise, returns true.
+ * Returns false if some of the critical parts of the global sound control
+ * data are NULL. Otherwise, returns true.
  */
 static inline bool snd_ctrl_data_ready(int read_only)
 {
-	return (ctrl_data && ctrl_data->name && ctrl_data->codec &&
-	        ctrl_data->read && (ctrl_data->write || read_only));
+	/* Implement it this way to make it more or less readable */
+	if (IS_ERR_OR_NULL(ctrl_data))
+		return false;
+	if (IS_ERR_OR_NULL(ctrl_data->name))
+		return false;
+	if (IS_ERR_OR_NULL(ctrl_data->codec))
+		return false;
+	if (IS_ERR_OR_NULL(ctrl_data->read))
+		return false;
+	if (IS_ERR_OR_NULL(ctrl_data->write) && !read_only)
+		return false;
+
+	return true;
 }
 
 /**
@@ -291,7 +316,7 @@ static inline bool __snd_ctrl_data_global(struct snd_ctrl_data *snd_data,
 }
 
 /**
- * snd_ctrl_data_global() - check whether a passed control data is global.
+ * snd_ctrl_data_global() - check whether passed control data is global.
  * @snd_data: pointer to sound control data.
  *
  * Compares a passed control data's name and a global's one.
@@ -303,8 +328,8 @@ static inline bool snd_ctrl_data_global(struct snd_ctrl_data *snd_data)
 }
 
 /**
- * snd_ctrl_data_global_rw() - check whether a passed control data is global
- * and has an ability to write to. Used exclusively by snd_ctrl_data_handled().
+ * snd_ctrl_data_global_rw() - check whether passed control data is global and
+ * has an ability to write to.
  * @snd_data: pointer to sound control data.
  *
  * Compares a passed control data's name and a global's one and checks the
@@ -324,11 +349,11 @@ static inline bool snd_ctrl_data_global_rw(struct snd_ctrl_data *snd_data)
  */
 static inline void apply_gains(struct snd_ctrl_data *snd_data)
 {
-#define apply_gain(line)					\
-	if (snd_data->lines.line##_line)			\
+#define apply_gain(name)					\
+	if (likely(snd_data->lines.name##_line))		\
 		snd_data->write(snd_data->codec,		\
-				snd_data->lines.line##_line,	\
-			       (stats->line##_gain))
+				snd_data->lines.name##_line,	\
+			       (stats->name##_gain))
 	apply_gain(mic);
 	apply_gain(cam_mic);
 	apply_gain(speaker_l);
@@ -338,25 +363,30 @@ static inline void apply_gains(struct snd_ctrl_data *snd_data)
 }
 
 /**
- * snd_ctrl_data_fill_of() - fill a passed control data with the values
- * from open firmware.
+ * snd_ctrl_data_fill() - fill passed control data with values from OF/pdata.
  * @snd_data: pointer to sound control data.
  *
- * Assigns the values from local data which are gained from DT to a passed
+ * Assigns the values from local data which are gained from OF/pdata to passed
  * data. Returns -EINVAL on failure or zero on success.
  */
-static inline int snd_ctrl_data_fill_of(struct snd_ctrl_data *snd_data)
+static inline int snd_ctrl_data_fill(struct snd_ctrl_data *snd_data)
 {
+	struct snd_ctrl_pdata *pdata;
+
 	if (IS_ERR_OR_NULL(stats))
 		return -EINVAL;
 
-	snd_data->lines.mic_line = stats->data.lines.mic_line;
-	snd_data->lines.cam_mic_line = stats->data.lines.cam_mic_line;
-	snd_data->lines.speaker_l_line = stats->data.lines.speaker_l_line;
-	snd_data->lines.speaker_r_line = stats->data.lines.speaker_r_line;
-	snd_data->lines.headphone_l_line = stats->data.lines.headphone_l_line;
-	snd_data->lines.headphone_r_line = stats->data.lines.headphone_r_line;
+	pdata = &(stats->data);
 
+	/* Setup default sound lines */
+	snd_data->lines.mic_line = pdata->lines.mic_line;
+	snd_data->lines.cam_mic_line = pdata->lines.cam_mic_line;
+	snd_data->lines.speaker_l_line = pdata->lines.speaker_l_line;
+	snd_data->lines.speaker_r_line = pdata->lines.speaker_r_line;
+	snd_data->lines.headphone_l_line = pdata->lines.headphone_l_line;
+	snd_data->lines.headphone_r_line = pdata->lines.headphone_r_line;
+
+	/* Apply default values for each acquired sound line */
 	apply_gains(snd_data);
 
 	return 0;
@@ -364,20 +394,20 @@ static inline int snd_ctrl_data_fill_of(struct snd_ctrl_data *snd_data)
 
 /**
  * parse_ctrl_data() - try to switch to another control data.
- * @snd_data: pointer to pointer to a sound control data to be switched.
+ * @snd_data: pointer to pointer to sound control data to be switched.
  * @ctrl_name: name of a desired codec whose control data will be used instead.
  *
  * Returns zero on success or -EINVAL to the contrary.
  */
-static int parse_ctrl_data(struct snd_ctrl_data **snd_data,
-			   const char *ctrl_name)
+static inline int
+parse_ctrl_data(struct snd_ctrl_data **snd_data, const char *ctrl_name)
 {
 	struct snd_ctrl_data *tmp = NULL, named = { .name = ctrl_name };
 
-	mutex_lock(&snd_ctrl_mutex);
+	mutex_lock(&list_mutex);
 	/* There is no sense in reassigning the same control data */
 	if (snd_ctrl_data_global(&named)) {
-		mutex_unlock(&snd_ctrl_mutex);
+		mutex_unlock(&list_mutex);
 		return 0;
 	}
 
@@ -387,17 +417,16 @@ static int parse_ctrl_data(struct snd_ctrl_data **snd_data,
 
 	/*
 	 * A temporary structure is used here just to make sure,
-	 * that there is a desired codec in the codec list.
+	 * that there is a desired codec in a codec list.
 	 */
 	tmp = find_ctrl_data(ctrl_name);
 	if (IS_ERR_OR_NULL(tmp)) {
-		mutex_unlock(&snd_ctrl_mutex);
+		mutex_unlock(&list_mutex);
 		return -EINVAL;
 	}
-
 empty:
 	*snd_data = tmp;
-	mutex_unlock(&snd_ctrl_mutex);
+	mutex_unlock(&list_mutex);
 
 	return 0;
 }
@@ -421,21 +450,18 @@ static ssize_t store_##name##_gain(struct kobject *kobj,		\
 				   struct kobj_attribute *attr,		\
 				   const char *buf, size_t count)	\
 {									\
-	int ret;							\
-	unsigned int val;						\
+	int ret, val;							\
 									\
 	if (!snd_ctrl_data_ready(__WL) || !line_present(name))		\
 		return -EINVAL;						\
 									\
-	ret = sscanf(buf, "%u", &val);					\
-	if (ret != 1 || (int)val < 0 || val > 256)			\
+	ret = sscanf(buf, "%d", &val);					\
+	if (ret != 1 || val < 0 || val > 256)				\
 		return -EINVAL;						\
 									\
 	ret = write_line(name, val);					\
-	if (IS_ERR_VALUE(ret))						\
-		return -EINVAL;						\
 									\
-	return count;							\
+	return IS_ERR_VALUE(ret) ? ret : count;				\
 }									\
 									\
 create_rw_kobj_attr(name##_gain);
@@ -457,25 +483,22 @@ static ssize_t store_##name##_gain(struct kobject *kobj,		\
 				   struct kobj_attribute *attr,		\
 				   const char *buf, size_t count)	\
 {									\
-	int ret;							\
-	unsigned int lval, rval;					\
+	int ret, lval, rval;						\
 									\
 	if (!snd_ctrl_data_ready(__WL) ||				\
 	    !line_present(name##_l) || !line_present(name##_r))		\
 		return -EINVAL;						\
 									\
-	ret = sscanf(buf, "%u %u", &lval, &rval);			\
+	ret = sscanf(buf, "%d %d", &lval, &rval);			\
 	if (ret != 2 ||							\
-	   (int)lval < 0 || lval > 256 ||				\
-	   (int)rval < 0 || rval > 256)					\
+	    lval < 0 || lval > 256 ||					\
+	    rval < 0 || rval > 256)					\
 		return -EINVAL;						\
 									\
 	ret  = write_line(name##_l, lval);				\
 	ret |= write_line(name##_r, rval);				\
-	if (IS_ERR_VALUE(ret))						\
-		return -EINVAL;						\
 									\
-	return count;							\
+	return IS_ERR_VALUE(ret) ? ret : count;				\
 }									\
 									\
 create_rw_kobj_attr(name##_gain);
@@ -496,14 +519,13 @@ static ssize_t store_##name##_line(struct kobject *kobj,		\
 				   struct kobj_attribute *attr,		\
 				   const char *buf, size_t count)	\
 {									\
-	int ret;							\
-	unsigned int reg;						\
+	int ret, reg;							\
 									\
 	if (!snd_ctrl_data_ready(__RL))					\
 		return -EINVAL;						\
 									\
 	ret = sscanf(buf, "%x", &reg);					\
-	if (ret != 1 || (int)reg < 0 || reg > 0x3FF)			\
+	if (ret != 1 || reg < 0 || reg > 0x3FF)				\
 		return -EINVAL;						\
 									\
 	ctrl_data->lines.name##_line = reg;				\
@@ -520,17 +542,21 @@ static ssize_t show_active_codec(struct kobject *kobj,
 	struct snd_ctrl_data *entry;
 	ssize_t len = 0;
 
-	if (list_empty(&codec_list))
+	/* Continuing is suboptimal in case of an emptiness */
+	if (list_empty(&ctrl_list))
 		return scnprintf(buf, 8, "<none>\n");
 
-	list_for_each_entry(entry, &codec_list, member)
+	/*
+	 * Iterate over the codec list and print all registered ctrl data.
+	 * The data that is in use right now is put into square brackets.
+	 */
+	list_for_each_entry(entry, &ctrl_list, member)
 		len += scnprintf(buf + len, CTRL_NAME_LEN + 4,
-				 list_is_last(&entry->member, &codec_list) ?
-				(snd_ctrl_data_global(entry) ? "[%s]"  : "%s") :
-				(snd_ctrl_data_global(entry) ? "[%s] " : "%s "),
-				 entry->name);
+				 snd_ctrl_data_global(entry) ?
+				 "[%s] " : "%s ", entry->name);
 
-	len += scnprintf(buf + len, 2, "\n");
+	/* Remove whitespace and put a new line in a right position */
+	scnprintf(buf + len - 1, 2, "\n");
 
 	return len;
 }
@@ -539,20 +565,18 @@ static ssize_t store_active_codec(struct kobject *kobj,
 				  struct kobj_attribute *attr,
 				  const char *buf, size_t count)
 {
-	int ret;
 	char name[CTRL_NAME_LEN];
+	int ret;
 
-	ret = sscanf(buf, "%31s", name);
+	/* Codec name should fit into CTRL_NAME_LEN (32 characters) */
+	ret = sscanf(buf, "%32s", name);
 	if (ret != 1 || IS_ERR_OR_NULL(name))
 		return -EINVAL;
 
+	/* Try to parse ctrl data and set it if it was found */
 	ret = parse_ctrl_data(&ctrl_data, name);
-	if (IS_ERR_VALUE(ret)) {
-		pr_err("Unable to set %s\n", name);
-		return ret;
-	}
 
-	return count;
+	return IS_ERR_VALUE(ret) ? ret : count;
 }
 
 static ssize_t show_ioctl_bypass(struct kobject *kobj,
@@ -564,6 +588,7 @@ static ssize_t show_ioctl_bypass(struct kobject *kobj,
 	if (!(ctrl_data->flags & SND_CTRL_BYPASS_IOCTL))
 		return scnprintf(buf, 13, "Hybrid mode\n");
 
+	/* SND_CTRL_BYPASS_IOCTL indicates that IOCTL ->write() is bypassed */
 	return scnprintf(buf, 17, "Restricted mode\n");
 }
 
@@ -633,19 +658,19 @@ static struct attribute_group snd_ctrl_lines_group = {
 	.attrs = snd_ctrl_lines,
 };
 
+static inline bool __devinit is_enabled(struct device_node *node)
+{
+	if (IS_ERR_OR_NULL(node))
+		return false;
+
+	return of_property_match_string(node, "status", "disabled") < 0;
+}
+
 static int __devinit snd_ctrl_parse_dt(struct device_node *node)
 {
-	u32 default_gain[6] = { 0 };
-	int ret, fail = -EINVAL;
+	u32 data[6] = { 0 };
+	int ret, fail;
 	char *key;
-
-	/* Stop parsing if driver is disabled in DT */
-	key = "status";
-	ret = of_property_match_string(node, key, "disabled");
-	if (ret > 0) {
-		pr_debug("Sound controller is disabled\n");
-		return 0;
-	}
 
 	/*
 	 * Codec name is compulsory. There is no sense in continuing in case of
@@ -658,35 +683,45 @@ static int __devinit snd_ctrl_parse_dt(struct device_node *node)
 		return -EINVAL;
 	}
 
-	/* Fail only if all the keys are unstated */
-#define get_line(fail, node, key, line) ({				    \
-	int ret = of_property_read_u32(node, key, &stats->data.lines.line); \
-	if (IS_ERR_VALUE(ret))						    \
-		pr_err("Unable to get %s\n", key);			    \
-	fail &= ret; })
+	/**
+	 * get_line() - try to get a register value from Device Tree.
+	 * @fail: indicator of a failure. An integer that is defined above.
+	 * @node: Device Tree node which will be used as a source of values.
+	 * @key: name of a Device Tree property.
+	 * @name: name of a sound line to store the value from property into.
+	 */
+#define get_line(fail, node, key, name) ({				   \
+	int rc = of_property_read_u32(node, key, &stats->data.lines.name); \
+	if (IS_ERR_VALUE(rc))						   \
+		pr_err("Unable to get %s from device tree\n", key);	   \
+	fail &= rc; })
 
+	/* Fail only if all the keys are unstated */
+	fail = -EINVAL | -ENODATA | -EOVERFLOW;
 	get_line(fail, node, "qcom,mic_line", mic_line);
 	get_line(fail, node, "qcom,cam_mic_line", cam_mic_line);
 	get_line(fail, node, "qcom,speaker_l_line", speaker_l_line);
 	get_line(fail, node, "qcom,speaker_r_line", speaker_r_line);
 	get_line(fail, node, "qcom,headphone_l_line", headphone_l_line);
 	get_line(fail, node, "qcom,headphone_r_line", headphone_r_line);
+	if (IS_ERR_VALUE(fail))
+		return -EINVAL;
 
+	/* Default gains are recommended but not required */
 	key = "qcom,default_gain";
-	ret = of_property_read_u32_array(node, key, default_gain, 6);
+	ret = of_property_read_u32_array(node, key, data, ARRAY_SIZE(data));
 	if (IS_ERR_VALUE(ret))
-		pr_err("Unable to get default sound gains from DT\n");
-	fail &= ret;
+		pr_err("Unable to get default sound gains from device tree\n");
 
 	/* Setup default sound gains */
-	stats->mic_gain = (!ret ? default_gain[0] : 0);
-	stats->cam_mic_gain = (!ret ? default_gain[1] : 0);
-	stats->speaker_l_gain = (!ret ? default_gain[2] : 0);
-	stats->speaker_r_gain = (!ret ? default_gain[3] : 0);
-	stats->headphone_l_gain = (!ret ? default_gain[4] : 0);
-	stats->headphone_r_gain = (!ret ? default_gain[5] : 0);
+	stats->mic_gain = (!ret ? data[0] : 0);
+	stats->cam_mic_gain = (!ret ? data[1] : 0);
+	stats->speaker_l_gain = (!ret ? data[2] : 0);
+	stats->speaker_r_gain = (!ret ? data[3] : 0);
+	stats->headphone_l_gain = (!ret ? data[4] : 0);
+	stats->headphone_r_gain = (!ret ? data[5] : 0);
 
-	return fail;
+	return 0;
 }
 
 static int __devinit snd_ctrl_parse_pdata(struct snd_ctrl_pdata *pdata)
@@ -710,7 +745,7 @@ static int __devinit snd_ctrl_parse_pdata(struct snd_ctrl_pdata *pdata)
 	stats->data.lines.headphone_r_line = pdata->lines.headphone_r_line;
 
 	/* Setup default sound gains */
-	if (pdata->default_gain) {
+	if (likely(pdata->default_gain)) {
 		stats->mic_gain = pdata->default_gain[0];
 		stats->cam_mic_gain = pdata->default_gain[1];
 		stats->speaker_l_gain = pdata->default_gain[2];
@@ -724,9 +759,7 @@ static int __devinit snd_ctrl_parse_pdata(struct snd_ctrl_pdata *pdata)
 
 static int __devinit snd_ctrl_probe(struct platform_device *pdev)
 {
-	struct snd_ctrl_pdata *pdata = pdev->dev.platform_data;
-	struct device_node *node = pdev->dev.of_node;
-	int ret;
+	int ret = 0;
 
 	stats = devm_kzalloc(&pdev->dev, sizeof(*stats), GFP_KERNEL);
 	if (IS_ERR_OR_NULL(stats)) {
@@ -737,22 +770,63 @@ static int __devinit snd_ctrl_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, stats);
 
 	/* Try to get default values either from OF or platform data */
-	if (node) {
-		ret = snd_ctrl_parse_dt(node);
+	if (is_enabled(pdev->dev.of_node)) {
+		ret = snd_ctrl_parse_dt(pdev->dev.of_node);
 		if (IS_ERR_VALUE(ret)) {
 			pr_err("Unable to parse device tree\n");
 			goto fail_parse;
 		}
-	} else if (pdata) {
-		ret = snd_ctrl_parse_pdata(pdata);
+	} else if (pdev->dev.platform_data) {
+		ret = snd_ctrl_parse_pdata(pdev->dev.platform_data);
 		if (IS_ERR_VALUE(ret)) {
 			pr_err("Unable to parse platform data\n");
 			goto fail_parse;
 		}
 	} else {
 		/* Get rid of stats if they are not going to be used */
-		platform_set_drvdata(pdev, NULL);
-		kfree(stats);
+		goto fail_parse;
+	}
+
+	return ret;
+
+fail_parse:
+	platform_set_drvdata(pdev, NULL);
+	/* Nullify statistics to avoid data filling at all */
+	devm_kfree(&pdev->dev, stats);
+
+	return ret;
+}
+
+static int __devexit snd_ctrl_remove(struct platform_device *pdev)
+{
+	platform_set_drvdata(pdev, NULL);
+
+	return 0;
+}
+
+static const struct of_device_id snd_ctrl_match_table[] = {
+	{ .compatible = "qcom,wcd9xxx-snd-ctrl" },
+	{ },
+};
+
+static struct platform_driver snd_ctrl_driver = {
+	.probe = snd_ctrl_probe,
+	.remove = __devexit_p(snd_ctrl_remove),
+	.driver = {
+		.name = "wcd9xxx-snd-ctrl",
+		.owner = THIS_MODULE,
+		.of_match_table = of_match_ptr(snd_ctrl_match_table),
+	},
+};
+
+static int __init snd_ctrl_init(void)
+{
+	int ret;
+
+	ret = platform_driver_register(&snd_ctrl_driver);
+	if (IS_ERR_VALUE(ret)) {
+		pr_err("Unable to register platform driver\n");
+		goto fail_pdrv;
 	}
 
 	snd_ctrl_kobj = kobject_create_and_add("sound_control_3", kernel_kobj);
@@ -781,48 +855,23 @@ fail_lines:
 fail_attrs:
 	kobject_del(snd_ctrl_kobj);
 fail_kobj:
-fail_parse:
-	platform_set_drvdata(pdev, NULL);
-	kfree(stats); /* Nullify statistics to avoid data filling at all */
-
+	platform_driver_unregister(&snd_ctrl_driver);
+fail_pdrv:
 	return ret;
-}
-
-static int __devexit snd_ctrl_remove(struct platform_device *pdev)
-{
-	platform_set_drvdata(pdev, NULL);
-
-	sysfs_remove_group(snd_ctrl_kobj, &snd_ctrl_lines_group);
-	sysfs_remove_group(snd_ctrl_kobj, &snd_ctrl_attr_group);
-	kobject_del(snd_ctrl_kobj);
-
-	return 0;
-}
-
-static const struct of_device_id snd_ctrl_match_table[] = {
-	{ .compatible = "qcom,wcd9xxx-snd-ctrl" },
-	{ },
-};
-
-static struct platform_driver snd_ctrl_driver = {
-	.probe = snd_ctrl_probe,
-	.remove = __devexit_p(snd_ctrl_remove),
-	.driver = {
-		.name = "wcd9xxx-snd-ctrl",
-		.owner = THIS_MODULE,
-		.of_match_table = of_match_ptr(snd_ctrl_match_table),
-	},
-};
-
-static int __init snd_ctrl_init(void)
-{
-	return platform_driver_register(&snd_ctrl_driver);
 }
 
 static void __exit snd_ctrl_exit(void)
 {
+	sysfs_remove_group(snd_ctrl_kobj, &snd_ctrl_lines_group);
+	sysfs_remove_group(snd_ctrl_kobj, &snd_ctrl_attr_group);
+	kobject_del(snd_ctrl_kobj);
+
 	platform_driver_unregister(&snd_ctrl_driver);
 }
 
 module_init(snd_ctrl_init);
 module_exit(snd_ctrl_exit);
+
+MODULE_AUTHOR("Alex Saiko <solcmdr@gmail.com>");
+MODULE_DESCRIPTION("WCD9xxx Sound Register SysFS Controller");
+MODULE_LICENSE("GPL v2");

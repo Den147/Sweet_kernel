@@ -106,4 +106,9 @@
 		qcom,pet-time = <10000>;
 		qcom,ipi-ping = <0>;
 	};
+
+	qcom,wcd9xxx-snd-ctrl {
+		compatible = "qcom,wcd9xxx-snd-ctrl";
+		status = "disabled";
+	};
 };

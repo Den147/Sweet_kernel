@@ -20,7 +20,7 @@ struct snd_ctrl_pdata {
 	/* Name of an expected codec */
 	const char *name;
 
-	/* Basic audio input lines */
+	/* Basic audio output lines */
 	struct snd_ctrl_lines lines;
 
 	/* Default sound gains */

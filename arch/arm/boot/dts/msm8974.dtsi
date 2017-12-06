@@ -507,6 +507,11 @@
 		qcom,firmware-name = "adsp";
 	};
 
+	qcom,wcd9xxx-snd-ctrl {
+		compatible = "qcom,wcd9xxx-snd-ctrl";
+		status = "disabled";
+	};
+
 	qcom,msm-pcm {
 		compatible = "qcom,msm-pcm-dsp";
 	};
