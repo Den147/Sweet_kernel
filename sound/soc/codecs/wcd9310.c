@@ -22,6 +22,7 @@
 #include <linux/mfd/wcd9xxx/core.h>
 #include <linux/mfd/wcd9xxx/wcd9xxx_registers.h>
 #include <linux/mfd/wcd9xxx/wcd9310_registers.h>
+#include <linux/mfd/wcd9xxx/wcd9xxx-snd-ctrl.h>
 #include <linux/mfd/wcd9xxx/pdata.h>
 #include <sound/pcm.h>
 #include <sound/pcm_params.h>
@@ -272,6 +273,7 @@ static struct hpf_work tx_hpf_work[NUM_DECIMATORS];
 
 struct tabla_priv {
 	struct snd_soc_codec *codec;
+	struct snd_ctrl_data *ctrl_data;
 	struct tabla_reg_address reg_addr;
 	u32 adc_count;
 	u32 cfilt1_cnt;
@@ -8477,6 +8479,24 @@ static int tabla_codec_probe(struct snd_soc_codec *codec)
 		goto err_pdata;
 	}
 
+	tabla->ctrl_data = kzalloc(sizeof(*tabla->ctrl_data), GFP_KERNEL);
+	if (IS_ERR_OR_NULL(tabla->ctrl_data)) {
+		dev_err(codec->dev, "Failed to allocate control data\n");
+		goto fail_ctrl;
+	}
+
+	tabla->ctrl_data->codec = codec;
+	tabla->ctrl_data->name = codec->name;
+	tabla->ctrl_data->codec_read = &tabla_read;
+	tabla->ctrl_data->codec_write = &tabla_write;
+
+	ret = snd_ctrl_register(tabla->ctrl_data);
+	if (IS_ERR_VALUE(ret)) {
+		pr_err("%s: Unable to register control data\n", __func__);
+		kfree(tabla->ctrl_data);
+	}
+
+fail_ctrl:
 //	snd_soc_add_codec_controls(codec, tabla_snd_controls,
 //			     ARRAY_SIZE(tabla_snd_controls));
 	if (TABLA_IS_1_X(control->version))
@@ -8660,6 +8680,7 @@ err_remove_irq:
 err_insert_irq:
 err_pdata:
 	mutex_destroy(&tabla->codec_resource_lock);
+	kfree(tabla->ctrl_data);
 	kfree(tabla);
 	return ret;
 }
@@ -8688,6 +8709,9 @@ static int tabla_codec_remove(struct snd_soc_codec *codec)
 	debugfs_remove(tabla->debugfs_poke);
 	debugfs_remove(tabla->debugfs_mbhc);
 #endif
+	snd_ctrl_unregister(tabla->ctrl_data);
+
+	kfree(tabla->ctrl_data);
 	kfree(tabla);
 	return 0;
 }
