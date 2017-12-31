@@ -3975,6 +3975,31 @@ static unsigned int tabla_read(struct snd_soc_codec *codec,
 	return val;
 }
 
+static int tabla_filter(struct snd_soc_codec *codec, unsigned int reg)
+{
+	struct tabla_priv *tabla = snd_soc_codec_get_drvdata(codec);
+	struct snd_ctrl_data *snd_data = tabla->ctrl_data;
+
+	if (IS_ERR_OR_NULL(snd_data) || !snd_ctrl_data_handled(snd_data))
+		return 0;
+
+	/* Sort in use-frequency order */
+	if (reg == snd_data->speaker_l_line)
+		return -EINVAL;
+	else if (reg == snd_data->speaker_r_line)
+		return -EINVAL;
+	else if (reg == snd_data->headphone_l_line)
+		return -EINVAL;
+	else if (reg == snd_data->headphone_r_line)
+		return -EINVAL;
+	else if (reg == snd_data->cam_mic_line)
+		return -EINVAL;
+	else if (reg == snd_data->mic_line)
+		return -EINVAL;
+
+	return 0;
+}
+
 static s16 tabla_get_current_v_ins(struct tabla_priv *tabla, bool hu)
 {
 	s16 v_ins;
@@ -8720,6 +8745,7 @@ static struct snd_soc_codec_driver soc_codec_dev_tabla = {
 	.remove	= tabla_codec_remove,
 	.read = tabla_read,
 	.write = tabla_write,
+	.filter = tabla_filter,
 	.readable_register = tabla_readable,
 	.volatile_register = tabla_volatile,
 
