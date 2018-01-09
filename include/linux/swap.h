@@ -8,7 +8,7 @@
 #include <linux/memcontrol.h>
 #include <linux/sched.h>
 #include <linux/node.h>
-
+#include <linux/fs.h>
 #include <linux/atomic.h>
 #include <asm/page.h>
 
@@ -319,8 +319,9 @@ extern int swap_writepage(struct page *page, struct writeback_control *wbc);
 extern void end_swap_bio_read(struct bio *bio, int err);
 
 /* linux/mm/swap_state.c */
-extern struct address_space swapper_space;
-#define total_swapcache_pages  swapper_space.nrpages
+extern struct address_space swapper_spaces[];
+#define swap_address_space(entry) (&swapper_spaces[swp_type(entry)])
+extern unsigned long total_swapcache_pages(void);
 extern void show_swap_cache_info(void);
 extern int add_to_swap(struct page *);
 extern int add_to_swap_cache(struct page *, swp_entry_t, gfp_t);
@@ -351,6 +352,8 @@ extern int swap_type_of(dev_t, sector_t, struct block_device **);
 extern unsigned int count_swap_pages(int, int);
 extern sector_t map_swap_page(struct page *, struct block_device **);
 extern sector_t swapdev_block(int, pgoff_t);
+extern int page_swapcount(struct page *);
+extern int swp_swapcount(swp_entry_t entry);
 extern int reuse_swap_page(struct page *);
 extern int try_to_free_swap(struct page *);
 struct backing_dev_info;
@@ -375,7 +378,6 @@ static inline void put_swap_token(struct mm_struct *mm)
 #ifdef CONFIG_CGROUP_MEM_RES_CTLR
 extern void
 mem_cgroup_uncharge_swapcache(struct page *page, swp_entry_t ent, bool swapout);
-extern int mem_cgroup_count_swap_user(swp_entry_t ent, struct page **pagep);
 #else
 static inline void
 mem_cgroup_uncharge_swapcache(struct page *page, swp_entry_t ent, bool swapout)
@@ -387,7 +389,7 @@ mem_cgroup_uncharge_swapcache(struct page *page, swp_entry_t ent, bool swapout)
 
 #define nr_swap_pages				0L
 #define total_swap_pages			0L
-#define total_swapcache_pages			0UL
+#define total_swapcache_pages()			0UL
 
 #define si_swapinfo(val) \
 	do { (val)->freeswap = (val)->totalswap = 0; } while (0)
@@ -462,6 +464,16 @@ static inline void delete_from_swap_cache(struct page *page)
 {
 }
 
+static inline int page_swapcount(struct page *page)
+{
+	return 0;
+}
+
+static inline int swp_swapcount(swp_entry_t entry)
+{
+	return 0;
+}
+
 #define reuse_swap_page(page)	(page_mapcount(page) == 1)
 
 static inline int try_to_free_swap(struct page *page)
@@ -498,14 +510,6 @@ static inline void
 mem_cgroup_uncharge_swapcache(struct page *page, swp_entry_t ent)
 {
 }
-
-#ifdef CONFIG_CGROUP_MEM_RES_CTLR
-static inline int
-mem_cgroup_count_swap_user(swp_entry_t ent, struct page **pagep)
-{
-	return 0;
-}
-#endif
 
 #endif /* CONFIG_SWAP */
 #endif /* __KERNEL__*/

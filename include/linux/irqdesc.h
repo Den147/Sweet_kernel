@@ -27,6 +27,8 @@ struct module;
  * @irq_count:		stats field to detect stalled irqs
  * @last_unhandled:	aging timer for unhandled count
  * @irqs_unhandled:	stats field for spurious unhandled interrupts
+ * @threads_handled:	stats field for deferred spurious detection of threaded handlers
+ * @threads_handled_last: comparator field for deferred spurious detection of theraded handlers
  * @lock:		locking for SMP
  * @affinity_hint:	hint to user space for preferred irq affinity
  * @affinity_notify:	context for notification of affinity changes
@@ -52,6 +54,8 @@ struct irq_desc {
 	unsigned int		irq_count;	/* For detecting broken IRQs */
 	unsigned long		last_unhandled;	/* Aging timer for unhandled count */
 	unsigned int		irqs_unhandled;
+	atomic_t		threads_handled;
+	int			threads_handled_last;
 	raw_spinlock_t		lock;
 	struct cpumask		*percpu_enabled;
 #ifdef CONFIG_SMP
@@ -108,9 +112,9 @@ static inline struct msi_desc *irq_desc_get_msi_desc(struct irq_desc *desc)
  * irqchip-style controller then we call the ->handle_irq() handler,
  * and it calls __do_IRQ() if it's attached to an irqtype-style controller.
  */
-static inline void generic_handle_irq_desc(unsigned int irq, struct irq_desc *desc)
+static inline bool generic_handle_irq_desc(unsigned int irq, struct irq_desc *desc)
 {
-	desc->handle_irq(irq, desc);
+	return desc->handle_irq(irq, desc);
 }
 
 int generic_handle_irq(unsigned int irq);
