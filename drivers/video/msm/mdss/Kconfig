@@ -3,11 +3,3 @@ config FB_MSM_MDSS_WRITEBACK
 	---help---
 	The MDSS Writeback Panel provides support for routing the output of
 	MDSS frame buffer driver and MDP processing to memory.
-
-config FB_MSM_MDSS_KCAL_CTRL
-	depends on FB_MSM_MDSS
-	bool "MDSS color control"
-	default y
-	---help---
-	  Enable sysfs for post-processing control of mdss-mdp5 display
-	  controllers in MDSS.

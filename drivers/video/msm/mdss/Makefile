@@ -7,7 +7,6 @@ mdss-mdp-objs += mdss_mdp_overlay.o
 mdss-mdp-objs += mdss_mdp_wb.o
 obj-$(CONFIG_FB_MSM_MDSS) += mdss-mdp.o
 obj-$(CONFIG_FB_MSM_MDSS) += mdss_fb.o
-obj-$(CONFIG_FB_MSM_MDSS_KCAL_CTRL) += mdss_mdp_kcal_ctrl.o
 
 mdss-dsi-objs := mdss_dsi.o mdss_dsi_host.o
 mdss-dsi-objs += mdss_dsi_panel.o
