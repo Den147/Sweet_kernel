@@ -3577,16 +3577,10 @@ static struct clk_freq_tbl clk_tbl_gfx3d_8930ab[] = {
 	F_END
 };
 
-static unsigned long fmax_gfx3d_8064ab[VDD_DIG_NUM] = {
-	[VDD_DIG_LOW]     = 128000000,
-	[VDD_DIG_NOMINAL] = 325000000,
-	[VDD_DIG_HIGH]    = 450000000
-};
-
 static unsigned long fmax_gfx3d_8064[VDD_DIG_NUM] = {
 	[VDD_DIG_LOW]     = 128000000,
 	[VDD_DIG_NOMINAL] = 325000000,
-	[VDD_DIG_HIGH]    = 400000000
+	[VDD_DIG_HIGH]    = 450000000
 };
 
 static unsigned long fmax_gfx3d_8930[VDD_DIG_NUM] = {
@@ -6650,12 +6644,6 @@ static void __init msm8960_clock_pre_init(void)
 	 * Change the freq tables for and voltage requirements for
 	 * clocks which differ between chips.
 	 */
-	if (cpu_is_apq8064() || cpu_is_apq8064aa()) {
-		gfx3d_clk.c.fmax = fmax_gfx3d_8064;
-	}
-	if (cpu_is_apq8064ab()) {
-		gfx3d_clk.c.fmax = fmax_gfx3d_8064ab;
-	}
 	if ((cpu_is_apq8064() &&
 		SOCINFO_VERSION_MAJOR(socinfo_get_version()) == 2) ||
 		cpu_is_apq8064ab() || cpu_is_apq8064aa()) {
@@ -6665,6 +6653,7 @@ static void __init msm8960_clock_pre_init(void)
 		sdc1_clk.c.fmax = fmax_sdc1_8064v2;
 	}
 	if (soc_class_is_apq8064()) {
+		gfx3d_clk.c.fmax = fmax_gfx3d_8064;
 		ijpeg_clk.c.fmax = fmax_ijpeg_8064;
 		mdp_clk.c.fmax = fmax_mdp_8064;
 		tv_src_clk.c.fmax = fmax_tv_src_8064;
