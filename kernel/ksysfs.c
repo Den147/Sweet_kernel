@@ -18,6 +18,7 @@
 #include <linux/stat.h>
 #include <linux/sched.h>
 #include <linux/capability.h>
+#include "sched/sched.h"
 
 #define KERNEL_ATTR_RO(_name) \
 static struct kobj_attribute _name##_attr = __ATTR_RO(_name)
@@ -207,6 +208,48 @@ static struct attribute_group kernel_attr_group = {
 	.attrs = kernel_attrs,
 };
 
+static ssize_t gentle_fair_sleepers_show(struct kobject *kobj,
+					 struct kobj_attribute *attr,
+					 char *buf)
+{
+	return scnprintf(buf, 3, "%u\n", sched_feat(GENTLE_FAIR_SLEEPERS) != 0);
+}
+
+static ssize_t gentle_fair_sleepers_store(struct kobject *kobj,
+					  struct kobj_attribute *attr,
+					  const char *buf, size_t count)
+{
+	int ret;
+	unsigned int enabled;
+
+	ret = kstrtouint(buf, 2, &enabled);
+	if (ret || (sched_feat(GENTLE_FAIR_SLEEPERS) != 0) == enabled)
+		return -EINVAL;
+
+	if (enabled) {
+		sysctl_sched_features |=
+			(1UL << __SCHED_FEAT_GENTLE_FAIR_SLEEPERS);
+		sched_feat_enable(__SCHED_FEAT_GENTLE_FAIR_SLEEPERS);
+	} else {
+		sysctl_sched_features &=
+			~(1UL << __SCHED_FEAT_GENTLE_FAIR_SLEEPERS);
+		sched_feat_disable(__SCHED_FEAT_GENTLE_FAIR_SLEEPERS);
+	}
+
+	return count;
+}
+KERNEL_ATTR_RW(gentle_fair_sleepers);
+
+static struct attribute *sched_feat_attrs[] = {
+	&gentle_fair_sleepers_attr.attr,
+	NULL,
+};
+
+static struct attribute_group sched_feat_attr_group = {
+	.name = "sched",
+	.attrs = sched_feat_attrs,
+};
+
 static int __init ksysfs_init(void)
 {
 	int error;
@@ -216,7 +259,8 @@ static int __init ksysfs_init(void)
 		error = -ENOMEM;
 		goto exit;
 	}
-	error = sysfs_create_group(kernel_kobj, &kernel_attr_group);
+	error  = sysfs_create_group(kernel_kobj, &kernel_attr_group);
+	error |= sysfs_create_group(kernel_kobj, &sched_feat_attr_group);
 	if (error)
 		goto kset_exit;
 
@@ -230,6 +274,7 @@ static int __init ksysfs_init(void)
 	return 0;
 
 group_exit:
+	sysfs_remove_group(kernel_kobj, &sched_feat_attr_group);
 	sysfs_remove_group(kernel_kobj, &kernel_attr_group);
 kset_exit:
 	kobject_put(kernel_kobj);
