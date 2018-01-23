@@ -3577,10 +3577,16 @@ static struct clk_freq_tbl clk_tbl_gfx3d_8930ab[] = {
 	F_END
 };
 
-static unsigned long fmax_gfx3d_8064[VDD_DIG_NUM] = {
+static unsigned long fmax_gfx3d_8064ab[VDD_DIG_NUM] = {
 	[VDD_DIG_LOW]     = 128000000,
 	[VDD_DIG_NOMINAL] = 325000000,
 	[VDD_DIG_HIGH]    = 450000000
+};
+
+static unsigned long fmax_gfx3d_8064[VDD_DIG_NUM] = {
+	[VDD_DIG_LOW]     = 128000000,
+	[VDD_DIG_NOMINAL] = 325000000,
+	[VDD_DIG_HIGH]    = 400000000
 };
 
 static unsigned long fmax_gfx3d_8930[VDD_DIG_NUM] = {
@@ -6600,15 +6606,8 @@ static void __init msm8960_clock_pre_init(void)
 	/* Initialize clock registers. */
 	reg_init();
 
-	if (soc_class_is_apq8064()) {
+	if (soc_class_is_apq8064())
 		vdd_sr2_hdmi_pll.set_vdd = set_vdd_sr2_hdmi_pll_8064;
-		gfx3d_clk.c.fmax = fmax_gfx3d_8064;
-		ijpeg_clk.c.fmax = fmax_ijpeg_8064;
-		mdp_clk.c.fmax = fmax_mdp_8064;
-		tv_src_clk.c.fmax = fmax_tv_src_8064;
-		vfe_clk.c.fmax = fmax_vfe_8064;
-		gmem_axi_clk.c.depends = &gfx3d_axi_clk.c;
-	}
 
 	/* Detect PLL4 programmed for alternate 491.52MHz clock plan. */
 	if (readl_relaxed(LCC_PLL0_L_VAL_REG) == 0x12) {
@@ -6651,6 +6650,12 @@ static void __init msm8960_clock_pre_init(void)
 	 * Change the freq tables for and voltage requirements for
 	 * clocks which differ between chips.
 	 */
+	if (cpu_is_apq8064() || cpu_is_apq8064aa()) {
+		gfx3d_clk.c.fmax = fmax_gfx3d_8064;
+	}
+	if (cpu_is_apq8064ab()) {
+		gfx3d_clk.c.fmax = fmax_gfx3d_8064ab;
+	}
 	if ((cpu_is_apq8064() &&
 		SOCINFO_VERSION_MAJOR(socinfo_get_version()) == 2) ||
 		cpu_is_apq8064ab() || cpu_is_apq8064aa()) {
@@ -6658,6 +6663,13 @@ static void __init msm8960_clock_pre_init(void)
 		vcodec_clk.c.fmax = fmax_vcodec_8064v2;
 		ce3_src_clk.c.fmax = fmax_ce3_8064v2;
 		sdc1_clk.c.fmax = fmax_sdc1_8064v2;
+	}
+	if (soc_class_is_apq8064()) {
+		ijpeg_clk.c.fmax = fmax_ijpeg_8064;
+		mdp_clk.c.fmax = fmax_mdp_8064;
+		tv_src_clk.c.fmax = fmax_tv_src_8064;
+		vfe_clk.c.fmax = fmax_vfe_8064;
+		gmem_axi_clk.c.depends = &gfx3d_axi_clk.c;
 	}
 
 	/*
