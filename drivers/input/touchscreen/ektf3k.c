@@ -231,7 +231,7 @@ static int s2w_switch = 0;
 static int s2w_switch_temp = 0;
 static int s2w_changed = 0;
 static int s2s_switch = 0;
-static int parrot_mod = 0;
+static int parrot_mod = 1;
 
 static int s2w_begin_v = 150;
 static int s2w_end_v = 1200;
