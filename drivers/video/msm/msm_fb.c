@@ -46,6 +46,7 @@
 #include <linux/sync.h>
 #include <linux/sw_sync.h>
 #include <linux/file.h>
+#include <linux/lcd_notify.h>
 
 #define MSM_FB_C
 #include "msm_fb.h"
@@ -1172,6 +1173,7 @@ static int msm_fb_blank_sub(int blank_mode, struct fb_info *info,
 	switch (blank_mode) {
 	case FB_BLANK_UNBLANK:
 		if (mdp_fb_is_power_off(mfd)) {
+			lcd_notifier_call_chain(LCD_EVENT_ON_START, NULL);
 			ret = pdata->on(mfd->pdev);
 			if (ret == 0) {
 				down(&mfd->sem);
@@ -1179,6 +1181,7 @@ static int msm_fb_blank_sub(int blank_mode, struct fb_info *info,
 				up(&mfd->sem);
 				mfd->panel_driver_on = mfd->op_enable;
 			}
+			lcd_notifier_call_chain(LCD_EVENT_ON_END, NULL);
 		}
 		break;
 
@@ -1204,6 +1207,7 @@ static int msm_fb_blank_sub(int blank_mode, struct fb_info *info,
 		if (mdp_fb_is_power_on(mfd)) {
 			cur_power_state = mfd->panel_power_state;
 
+			lcd_notifier_call_chain(LCD_EVENT_OFF_START, NULL);
 			mfd->op_enable = FALSE;
 			down(&mfd->sem);
 			mfd->panel_power_state = req_power_state;
@@ -1225,6 +1229,7 @@ static int msm_fb_blank_sub(int blank_mode, struct fb_info *info,
 
 			msm_fb_release_timeline(mfd);
 			mfd->op_enable = TRUE;
+			lcd_notifier_call_chain(LCD_EVENT_OFF_END, NULL);
 		}
 		break;
 	}
