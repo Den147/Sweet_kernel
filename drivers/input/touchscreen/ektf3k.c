@@ -224,13 +224,13 @@ static int lid_suspend = 1;
 static int s2w_orientation = 1;
 static int shortsweep = 1;
 int lid_closed;
-static int dt2w_switch = 1;
-static int dt2w_switch_temp = 1;
+static int dt2w_switch = 0;
+static int dt2w_switch_temp = 0;
 static int dt2w_changed = 0;
-static int s2w_switch = 15;
-static int s2w_switch_temp = 15;
+static int s2w_switch = 0;
+static int s2w_switch_temp = 0;
 static int s2w_changed = 0;
-static int s2s_switch = 1;
+static int s2s_switch = 0;
 static int parrot_mod = 0;
 
 static int s2w_begin_v = 150;
