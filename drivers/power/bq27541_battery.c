@@ -31,7 +31,6 @@
 #include <asm/unaligned.h>
 #include <linux/miscdevice.h>
 #include <mach/gpio.h>
-#include <asm/mach-types.h>
 
 #define SMBUS_RETRY                                     (0)
 #define GPIOPIN_LOW_BATTERY_DETECT	  29
@@ -56,6 +55,9 @@
 #define BATT_STS_SOCF		0x0002
 #define BATT_STS_FC			0x0200
 
+#define THERMAL_RULE1 1
+#define THERMAL_RULE2 2
+
 /* Debug Message */
 #define BAT_NOTICE(format, arg...)	\
 	printk(KERN_NOTICE "%s " format , __FUNCTION__ , ## arg)
@@ -67,7 +69,7 @@
 unsigned bq27541_battery_cable_status = 0;
 unsigned bq27541_battery_driver_ready = 0;
 int ac_on ;
-static int usb_on ;
+int usb_on ;
 extern bool wireless_on;
 extern bool otg_on;
 static unsigned int 	battery_current;
@@ -80,9 +82,8 @@ static char *status_text[] = {"Unknown", "Charging", "Discharging", "Not chargin
 static int bq27541_get_psp(int reg_offset, enum power_supply_property psp,union power_supply_propval *val);
 static int bq27541_get_property(struct power_supply *psy,
 	enum power_supply_property psp, union power_supply_propval *val);
-extern int smb345_charger_enable(bool enable);
 extern unsigned  get_usb_cable_status(void);
-extern int check_charging_status(void);
+extern int smb345_config_thermal_charging(int temp, int volt, int rule);
 extern void reconfig_AICL(void);
 
 module_param(battery_current, uint, 0644);
@@ -147,7 +148,12 @@ static enum power_supply_property bq27541_properties[] = {
 	POWER_SUPPLY_PROP_CURRENT_NOW,
 };
 
-void bq27541_check_cable_type(void)
+unsigned get_cable_status(void)
+{
+	return wireless_on || bq27541_battery_cable_status;
+}
+
+void bq27541_check_cabe_type(void)
 {
       if(bq27541_battery_cable_status == USB_AC_Adapter) {
 		 ac_on = 1;
@@ -174,13 +180,13 @@ static int power_get_property(struct power_supply *psy,
 	switch (psp) {
 
 	case POWER_SUPPLY_PROP_ONLINE:
-		if(psy->type == POWER_SUPPLY_TYPE_MAINS &&  ac_on)
+		   if(psy->type == POWER_SUPPLY_TYPE_MAINS &&  ac_on)
 			val->intval =  1;
-		else if (psy->type == POWER_SUPPLY_TYPE_USB && usb_on)
+		   else if (psy->type == POWER_SUPPLY_TYPE_USB && usb_on)
 			val->intval =  1;
-		else if (psy->type == POWER_SUPPLY_TYPE_WIRELESS && wireless_on)
+		   else if (psy->type == POWER_SUPPLY_TYPE_WIRELESS && wireless_on)
 			val->intval =  1;
-		else
+		   else
 			val->intval = 0;
 		break;
 
@@ -231,11 +237,10 @@ static struct power_supply bq27541_supply[] = {
 		.type		= POWER_SUPPLY_TYPE_WIRELESS,
 		.supplied_to	= supply_list,
 		.num_supplicants = ARRAY_SIZE(supply_list),
-		.properties = power_properties,
+		.properties =	power_properties,
 		.num_properties = ARRAY_SIZE(power_properties),
 		.get_property = power_get_property,
 	},
-
 };
 
 static struct bq27541_device_info {
@@ -258,11 +263,10 @@ static struct bq27541_device_info {
 	int bat_vol;
 	int bat_current;
 	int bat_capacity;
-	int bat_limit_off;
 	int bat_capacity_zero_count;
 	unsigned int old_capacity;
 	unsigned int cap_err;
-	unsigned int old_temperature;
+	int old_temperature;
 	bool temp_err;
 	unsigned int prj_id;
 	spinlock_t lock;
@@ -338,38 +342,11 @@ static ssize_t show_battery_smbus_status(struct device *dev, struct device_attri
 	int status=!bq27541_device->smbus_status;
 	return sprintf(buf, "%d\n", status);
 }
-
-#ifdef FACTORY_IMAGE
-static ssize_t battery_limit_off_store(struct device *dev, struct device_attribute *devattr, const char *buf, size_t count)
-{
-	if (buf[0] == '0') {
-		bq27541_device->bat_limit_off = 0;
-		BAT_NOTICE("bq27541_device->bat_limit_off = 0\n");
-	}
-	if (buf[0] == '1') {
-		bq27541_device->bat_limit_off = 1;
-		BAT_NOTICE("bq27541_device->bat_limit_off = 1\n");
-	}
-	return count;
-}
-
-static ssize_t battery_limit_off_show(struct device *dev, struct device_attribute *devattr, char *buf)
-{
-	return sprintf(buf, "bat_limit_off = %d, echo 1(off) or 0(on) > battery_limit_off\n", bq27541_device->bat_limit_off);
-}
-#endif
-
 static DEVICE_ATTR(battery_smbus, S_IWUSR | S_IRUGO, show_battery_smbus_status,NULL);
-#ifdef FACTORY_IMAGE
-static DEVICE_ATTR(battery_limit_off, S_IWUSR | S_IRUGO, battery_limit_off_show, battery_limit_off_store);
-#endif
 
 static struct attribute *battery_smbus_attributes[] = {
 
 	&dev_attr_battery_smbus.attr,
-#ifdef FACTORY_IMAGE
-	&dev_attr_battery_limit_off.attr,
-#endif
 	NULL
 };
 
@@ -377,18 +354,18 @@ static const struct attribute_group battery_smbus_group = {
 	.attrs = battery_smbus_attributes,
 };
 
-int bq27541_battery_current(void)
+static int bq27541_battery_current(void)
 {
 	int ret;
 	int curr = 0;
 
 	ret = bq27541_read_i2c(bq27541_data[REG_CURRENT].addr, &curr, 0);
 	if (ret) {
-		BAT_NOTICE("error reading current ret = %x\n",ret);
+		BAT_ERR("error reading current ret = %x\n", ret);
 		return 0;
 	}
 
-	curr = (int)(s16)curr;
+	curr = (s16)curr;
 
 	if (curr >= bq27541_data[REG_CURRENT].min_value &&
 		curr <= bq27541_data[REG_CURRENT].max_value) {
@@ -396,7 +373,6 @@ int bq27541_battery_current(void)
 	} else
 		return 0;
 }
-EXPORT_SYMBOL(bq27541_battery_current);
 
 static void battery_status_poll(struct work_struct *work)
 {
@@ -408,8 +384,18 @@ static void battery_status_poll(struct work_struct *work)
 	reconfig_AICL();
 	power_supply_changed(&bq27541_supply[Charger_Type_Battery]);
 
+	if (!bq27541_device->temp_err) {
+		if (ac_on)
+			smb345_config_thermal_charging(bq27541_device->old_temperature/10, bq27541_device->bat_vol, THERMAL_RULE1);
+		else if (wireless_on)
+			smb345_config_thermal_charging(bq27541_device->old_temperature/10, bq27541_device->bat_vol, THERMAL_RULE2);
+		else if (usb_on)
+			smb345_config_thermal_charging(bq27541_device->old_temperature/10, bq27541_device->bat_vol, THERMAL_RULE1);
+	}
+
 	/* Schedule next polling */
-	queue_delayed_work(bq27541_battery_work_queue, &batt_dev->status_poll_work, battery_check_interval*HZ);
+	queue_delayed_work(bq27541_battery_work_queue,
+		&batt_dev->status_poll_work, battery_check_interval*HZ);
 }
 
 static void low_low_battery_check(struct work_struct *work)
@@ -484,11 +470,14 @@ int bq27541_battery_callback(unsigned usb_cable_state)
        printk("========================================================\n");
 
 	if (old_cable_status != bq27541_battery_cable_status) {
-		printk("battery_callback cable_wake_lock 5 sec...\n ");
+		printk(KERN_INFO"battery_callback cable_wake_lock 5 sec...\n ");
 		wake_lock_timeout(&bq27541_device->cable_wake_lock, 5*HZ);
 	}
 
-	bq27541_check_cable_type();
+	bq27541_check_cabe_type();
+
+	if(!cancel_delayed_work(&bq27541_device->status_poll_work))
+		flush_workqueue(bq27541_battery_work_queue);
 
 	if(!bq27541_battery_cable_status) {
 		if (old_cable_status == USB_AC_Adapter) {
@@ -517,14 +506,18 @@ EXPORT_SYMBOL(bq27541_battery_callback);
 
 int bq27541_wireless_callback(unsigned wireless_state)
 {
-	printk("========================================================\n");
-	printk("bq27541_wireless_callback  wireless_state = %x\n", wireless_state) ;
-	printk("========================================================\n");
+	printk(KERN_NOTICE "========================================================\n");
+	printk(KERN_NOTICE "bq27541_wireless_callback  wireless_state = %x\n", wireless_state) ;
+	printk(KERN_NOTICE "========================================================\n");
+
+	if(!cancel_delayed_work(&bq27541_device->status_poll_work))
+		flush_workqueue(bq27541_battery_work_queue);
 
 	power_supply_changed(&bq27541_supply[Charger_Type_WIRELESS]);
 
 	cancel_delayed_work(&bq27541_device->status_poll_work);
-	queue_delayed_work(bq27541_battery_work_queue, &bq27541_device->status_poll_work, 2*HZ);
+	queue_delayed_work(bq27541_battery_work_queue,
+		&bq27541_device->status_poll_work, 2*HZ);
 
 	return 1;
 }
@@ -571,14 +564,11 @@ static int bq27541_get_psp(int reg_offset, enum power_supply_property psp,
 	if (psp == POWER_SUPPLY_PROP_STATUS) {
 		ret = bq27541_device->bat_status = rt_value;
 
-		if ((ac_on || usb_on || wireless_on) && !otg_on) {		/* Charging detected */
+		if ((ac_on || usb_on || wireless_on) && !otg_on) {/* Charging detected */
 			if (bq27541_device->old_capacity == 100) {
 				val->intval = POWER_SUPPLY_STATUS_FULL;
 			} else {
-				if (!(machine_is_apq8064_duma() && usb_on))
-					val->intval = POWER_SUPPLY_STATUS_CHARGING;
-				else
-					val->intval = POWER_SUPPLY_STATUS_NOT_CHARGING;
+				val->intval = POWER_SUPPLY_STATUS_CHARGING;
 			}
 		} else if (ret & BATT_STS_SOCF) {		/* Fully Discharged detected */
 			val->intval = POWER_SUPPLY_STATUS_DISCHARGING;
@@ -593,7 +583,7 @@ static int bq27541_get_psp(int reg_offset, enum power_supply_property psp,
 		if (bq27541_device->smbus_status >=0) {
 			if (rt_value >= bq27541_data[REG_TEMPERATURE].min_value &&
 				rt_value <= bq27541_data[REG_TEMPERATURE].max_value) {
-				if (rt_value >=2330  && rt_value <=3730) {
+				if (rt_value >=2530  && rt_value <=3530) {
 					ret = rt_value -2730;
 					if(bq27541_device->temp_err)
 						bq27541_device->temp_err = false;
@@ -607,19 +597,19 @@ static int bq27541_get_psp(int reg_offset, enum power_supply_property psp,
 		if (bq27541_device->temp_err) {
 			BAT_NOTICE("error: temperature ret=%d, old_temp=%d \n",
 				rt_value, bq27541_device->old_temperature);
-			if (bq27541_device->old_temperature != 0xFF)
+			if (bq27541_device->old_temperature != 0xFF) {
 				ret = bq27541_device->old_temperature;
-			else
+			} else
 				return -EINVAL;
 		}
+
 		bq27541_device->old_temperature = val->intval = ret;
-		BAT_NOTICE("temperature= %d (0.1?XC)\n", val->intval);
+		BAT_NOTICE("temperature= %d (0.1¢XC)\n", val->intval);
 	}
 	if (psp == POWER_SUPPLY_PROP_CURRENT_NOW) {
-		val->intval = bq27541_device->bat_current = bq27541_battery_current();
+		val->intval = bq27541_device->bat_current
+			= bq27541_battery_current();
 		BAT_NOTICE("current = %d mA\n", val->intval);
-
-		BAT_NOTICE("charging_status = %d\n", check_charging_status());
 	}
 	return 0;
 }
@@ -638,8 +628,7 @@ static int bq27541_get_capacity(union power_supply_propval *val)
 		if ((bq27541_device->bat_capacity <= 0) || (bq27541_device->bat_capacity > 100)) {
 			check_cap = true;
 			BAT_NOTICE("check capacity, cap = %d, smb_retry = %d\n", bq27541_device->bat_capacity, smb_retry);
-		}
-		else
+		} else
 			check_cap = false;
 	} while(((bq27541_device->smbus_status < 0) || check_cap) && ( ++smb_retry <= smb_retry_max));
 
@@ -659,8 +648,8 @@ static int bq27541_get_capacity(union power_supply_propval *val)
 
 	temp_capacity = ret = bq27541_device->bat_capacity;
 
-	 if (!(bq27541_device->bat_capacity >= bq27541_data[REG_CAPACITY].min_value &&
-		bq27541_device->bat_capacity <= bq27541_data[REG_CAPACITY].max_value)) {
+	if (!(bq27541_device->bat_capacity >= bq27541_data[REG_CAPACITY].min_value &&
+			bq27541_device->bat_capacity <= bq27541_data[REG_CAPACITY].max_value)) {
 		val->intval = bq27541_device->old_capacity;
 		BAT_NOTICE("use old capacity=%u\n", bq27541_device->old_capacity);
 		return 0;
@@ -689,56 +678,34 @@ static int bq27541_get_capacity(union power_supply_propval *val)
 	temp_capacity = ((temp_capacity <0) ? 0 : temp_capacity);
 	val->intval = temp_capacity;
 
-	if ((temp_capacity == 0) && (bq27541_battery_cable_status || wireless_on)) {
+	if ((temp_capacity == 0) &&
+		(bq27541_battery_cable_status || wireless_on)) {
 		bq27541_device->bat_capacity_zero_count++;
-		if (bq27541_device->bat_capacity_zero_count >= 6)
-		{
+		if (bq27541_device->bat_capacity_zero_count >= 6) {
 			bq27541_device->bat_capacity_zero_count = 0;
-			BAT_NOTICE("pretend no charging type to shutdown system !!!\n");
+			BAT_NOTICE("pretend no charging type to shutdown\n");
 			bq27541_battery_callback(0);
 			wireless_on = 0;
 			bq27541_wireless_callback(0);
-		}
-		else
+		} else
 			BAT_NOTICE("bat_capacity_zero_count = %d",
 				bq27541_device->bat_capacity_zero_count);
-	}
-	else
+	} else
 		bq27541_device->bat_capacity_zero_count = 0;
 
 	if (temp_capacity < 5 && battery_check_interval != 10) {
 		battery_check_interval = 10;
-		BAT_NOTICE("battery_check_interval = %d \n", battery_check_interval);
-	}
-	else if(temp_capacity >= 5 && battery_check_interval != BATTERY_POLLING_RATE)
-	{
+		BAT_NOTICE("battery_check_interval = %d\n",
+			battery_check_interval);
+	} else if (temp_capacity >= 5 &&
+		battery_check_interval != BATTERY_POLLING_RATE) {
 		battery_check_interval = BATTERY_POLLING_RATE;
-		BAT_NOTICE("battery_check_interval = %d \n", battery_check_interval);
+		BAT_NOTICE("battery_check_interval = %d\n",
+			battery_check_interval);
 	}
 
 	bq27541_device->old_capacity = val->intval;
 	bq27541_device->cap_err=0;
-
-#ifdef FACTORY_IMAGE
-	if(bq27541_device->bat_limit_off == 0)
-	{
-		if(val->intval <= 40)
-		{
-			BAT_NOTICE("smb345 charger enable\n");
-			smb345_charger_enable(true);
-		}
-		else if(val->intval >= 60)
-		{
-			BAT_NOTICE("smb345 charger disable\n");
-			smb345_charger_enable(false);
-		}
-	}
-	else
-	{
-		BAT_NOTICE("smb345 charger enable\n");
-		smb345_charger_enable(true);
-	}
-#endif
 
 	BAT_NOTICE("= %u%% ret= %u\n", val->intval, ret);
 	return 0;
@@ -794,7 +761,6 @@ error:
 	return -EINVAL;
 }
 
-#include "bq27541_stress_test.c"
 static int bq27541_probe(struct i2c_client *client,
 	const struct i2c_device_id *id)
 {
@@ -814,7 +780,6 @@ static int bq27541_probe(struct i2c_client *client,
 	bq27541_device->old_capacity = 0xFF;
 	bq27541_device->old_temperature = 0xFF;
 	bq27541_device->gpio_low_battery_detect = GPIOPIN_LOW_BATTERY_DETECT;
-	bq27541_device->bat_limit_off = 0;
 	bq27541_device->bat_capacity_zero_count = 0;
 
 	for (i = 0; i < ARRAY_SIZE(bq27541_supply); i++) {
@@ -831,26 +796,17 @@ static int bq27541_probe(struct i2c_client *client,
 	bq27541_battery_work_queue = create_singlethread_workqueue("bq27541_battery_work_queue");
 	INIT_DELAYED_WORK(&bq27541_device->status_poll_work, battery_status_poll);
 	INIT_DELAYED_WORK(&bq27541_device->low_low_bat_work, low_low_battery_check);
-	INIT_DELAYED_WORK(&bq27541_device->battery_stress_test, battery_strees_test);
 	cancel_delayed_work(&bq27541_device->status_poll_work);
 
 	spin_lock_init(&bq27541_device->lock);
 	wake_lock_init(&bq27541_device->low_battery_wake_lock, WAKE_LOCK_SUSPEND, "low_battery_detection");
-	wake_lock_init(&bq27541_device->cable_wake_lock, WAKE_LOCK_SUSPEND, "cable_state_changed");
+	wake_lock_init(&bq27541_device->cable_wake_lock,
+		WAKE_LOCK_SUSPEND, "cable_state_changed");
 
 	/* Register sysfs */
 	ret = sysfs_create_group(&client->dev.kobj, &battery_smbus_group);
 	if (ret) {
 		dev_err(&client->dev, "bq27541_probe: unable to create the sysfs\n");
-	}
-
-	/* Misc device registration */
-	bq27541_device->battery_misc.minor = MISC_DYNAMIC_MINOR;
-	bq27541_device->battery_misc.name = "battery";
-	bq27541_device->battery_misc.fops   = &bq27541_battery_fops;
-	ret = misc_register(&bq27541_device->battery_misc);
-	if(ret) {
-		pr_info("Cannot register bq27541 miscdev (err=%d)\n", ret);
 	}
 
 	setup_low_battery_irq();
