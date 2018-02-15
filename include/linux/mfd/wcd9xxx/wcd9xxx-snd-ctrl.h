@@ -17,6 +17,13 @@
 #include <linux/list.h>
 #include <sound/soc.h>
 
+/*
+ * Ignore write attemptions coming from IOCTL to handled registers.
+ * Note that sound codec must utilize this flag in its filter call,
+ * otherwise it won't change anything.
+ */
+#define SND_CTRL_BYPASS_IOCTL	BIT(0)
+
 struct snd_ctrl_lines {
 	u32 mic_line;
 	u32 cam_mic_line;
@@ -36,6 +43,9 @@ struct snd_ctrl_data {
 
 	/* Basic audio input lines */
 	struct snd_ctrl_lines lines;
+
+	/* Data-specific control flags */
+	unsigned long flags;
 
 	/* Codec's I/O functions used to access to sound registers */
 	unsigned int	(*read)		(struct snd_soc_codec *codec,

@@ -555,6 +555,40 @@ static ssize_t store_active_codec(struct kobject *kobj,
 	return count;
 }
 
+static ssize_t show_ioctl_bypass(struct kobject *kobj,
+				 struct kobj_attribute *attr,
+				 char *buf)
+{
+	if (!snd_ctrl_data_ready(__WL))
+		return scnprintf(buf, 15, "<unsupported>\n");
+	if (!(ctrl_data->flags & SND_CTRL_BYPASS_IOCTL))
+		return scnprintf(buf, 13, "Hybrid mode\n");
+
+	return scnprintf(buf, 17, "Restricted mode\n");
+}
+
+static ssize_t store_ioctl_bypass(struct kobject *kobj,
+				  struct kobj_attribute *attr,
+				  const char *buf, size_t count)
+{
+	int ret;
+	u8 val;
+
+	if (!snd_ctrl_data_ready(__WL))
+		return -EINVAL;
+
+	ret = kstrtou8(buf, 2, &val);
+	if (IS_ERR_VALUE(ret))
+		return -EINVAL;
+
+	if (val)
+		ctrl_data->flags |= SND_CTRL_BYPASS_IOCTL;
+	else
+		ctrl_data->flags &= ~(SND_CTRL_BYPASS_IOCTL);
+
+	return count;
+}
+
 create_one_single(mic);
 create_one_single(cam_mic);
 create_one_double(speaker);
@@ -568,6 +602,7 @@ create_line_control(headphone_l);
 create_line_control(headphone_r);
 
 create_rw_kobj_attr(active_codec);
+create_rw_kobj_attr(ioctl_bypass);
 
 static struct attribute *snd_ctrl_attrs[] = {
 	&mic_gain.attr,
@@ -575,6 +610,7 @@ static struct attribute *snd_ctrl_attrs[] = {
 	&speaker_gain.attr,
 	&headphone_gain.attr,
 	&active_codec.attr,
+	&ioctl_bypass.attr,
 	NULL,
 };
 
