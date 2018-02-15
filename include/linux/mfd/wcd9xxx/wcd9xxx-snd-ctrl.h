@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017, Alex Saiko <solcmdr@gmail.com>
+ * Copyright (C) 2017-2018, Alex Saiko <solcmdr@gmail.com>
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -17,6 +17,15 @@
 #include <linux/list.h>
 #include <sound/soc.h>
 
+struct snd_ctrl_lines {
+	u32 mic_line;
+	u32 cam_mic_line;
+	u32 speaker_l_line;
+	u32 speaker_r_line;
+	u32 headphone_l_line;
+	u32 headphone_r_line;
+};
+
 struct snd_ctrl_data {
 	/* Sound codec conjuncted to a control data */
 	struct snd_soc_codec *codec;
@@ -26,17 +35,12 @@ struct snd_ctrl_data {
 	const char *name;
 
 	/* Basic audio input lines */
-	u32 mic_line;
-	u32 cam_mic_line;
-	u32 headphone_l_line;
-	u32 headphone_r_line;
-	u32 speaker_l_line;
-	u32 speaker_r_line;
+	struct snd_ctrl_lines lines;
 
 	/* Codec's I/O functions used to access to sound registers */
-	unsigned int	(*codec_read)	(struct snd_soc_codec *codec,
+	unsigned int	(*read)		(struct snd_soc_codec *codec,
 					 unsigned int reg);
-	int		(*codec_write)	(struct snd_soc_codec *codec,
+	int		(*write)	(struct snd_soc_codec *codec,
 					 unsigned int reg, unsigned int val);
 };
 

@@ -3984,17 +3984,17 @@ static int tabla_filter(struct snd_soc_codec *codec, unsigned int reg)
 		return 0;
 
 	/* Sort in use-frequency order */
-	if (reg == snd_data->speaker_l_line)
+	if (reg == snd_data->lines.speaker_l_line)
 		return -EINVAL;
-	else if (reg == snd_data->speaker_r_line)
+	else if (reg == snd_data->lines.speaker_r_line)
 		return -EINVAL;
-	else if (reg == snd_data->headphone_l_line)
+	else if (reg == snd_data->lines.headphone_l_line)
 		return -EINVAL;
-	else if (reg == snd_data->headphone_r_line)
+	else if (reg == snd_data->lines.headphone_r_line)
 		return -EINVAL;
-	else if (reg == snd_data->cam_mic_line)
+	else if (reg == snd_data->lines.cam_mic_line)
 		return -EINVAL;
-	else if (reg == snd_data->mic_line)
+	else if (reg == snd_data->lines.mic_line)
 		return -EINVAL;
 
 	return 0;
