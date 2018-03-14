@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017-2018, Alex Saiko <solcmdr@gmail.com>
+ * Copyright (C) 2017, Alex Saiko <solcmdr@gmail.com>
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -17,40 +17,26 @@
 #include <linux/list.h>
 #include <sound/soc.h>
 
-/*
- * Ignore write attemptions coming from IOCTL to handled registers.
- * Note that sound codec must utilize this flag in its filter call,
- * otherwise it won't change anything.
- */
-#define SND_CTRL_BYPASS_IOCTL	BIT(0)
-
-struct snd_ctrl_lines {
-	u32 mic_line;
-	u32 cam_mic_line;
-	u32 speaker_l_line;
-	u32 speaker_r_line;
-	u32 headphone_l_line;
-	u32 headphone_r_line;
-};
-
 struct snd_ctrl_data {
 	/* Sound codec conjuncted to a control data */
 	struct snd_soc_codec *codec;
 	struct list_head member;
 
-	/* Name of control data */
+	/* Control data's name */
 	const char *name;
 
-	/* Basic audio output lines */
-	struct snd_ctrl_lines lines;
-
-	/* Data-specific control flags */
-	unsigned long flags;
+	/* Basic audio input lines */
+	u32 mic_line;
+	u32 cam_mic_line;
+	u32 headphone_l_line;
+	u32 headphone_r_line;
+	u32 speaker_l_line;
+	u32 speaker_r_line;
 
 	/* Codec's I/O functions used to access to sound registers */
-	unsigned int	(*read)		(struct snd_soc_codec *codec,
+	unsigned int	(*codec_read)	(struct snd_soc_codec *codec,
 					 unsigned int reg);
-	int		(*write)	(struct snd_soc_codec *codec,
+	int		(*codec_write)	(struct snd_soc_codec *codec,
 					 unsigned int reg, unsigned int val);
 };
 

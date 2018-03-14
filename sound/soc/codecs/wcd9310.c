@@ -3980,8 +3980,7 @@ static int tabla_filter(struct snd_soc_codec *codec, unsigned int reg)
 	struct tabla_priv *tabla = snd_soc_codec_get_drvdata(codec);
 	struct snd_ctrl_data *snd_data = tabla->ctrl_data;
 
-	if (IS_ERR_OR_NULL(snd_data) || !snd_ctrl_data_handled(snd_data) ||
-	    !(snd_data->flags & SND_CTRL_BYPASS_IOCTL))
+	if (IS_ERR_OR_NULL(snd_data) || !snd_ctrl_data_handled(snd_data))
 		return 0;
 
 	/* Sort in use-frequency order */
@@ -8513,9 +8512,8 @@ static int tabla_codec_probe(struct snd_soc_codec *codec)
 
 	tabla->ctrl_data->codec = codec;
 	tabla->ctrl_data->name = codec->name;
-	tabla->ctrl_data->read = &tabla_read;
-	tabla->ctrl_data->write = &tabla_write;
-	tabla->ctrl_data->flags = SND_CTRL_BYPASS_IOCTL;
+	tabla->ctrl_data->codec_read = &tabla_read;
+	tabla->ctrl_data->codec_write = &tabla_write;
 
 	ret = snd_ctrl_register(tabla->ctrl_data);
 	if (IS_ERR_VALUE(ret)) {

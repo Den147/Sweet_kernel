@@ -18,7 +18,6 @@
 * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 */
 
-
 extern void sweep2wake_setdev(struct input_dev * input_device); 
 extern int pwr_key_pressed;
 extern int lid_closed;
