@@ -8513,8 +8513,8 @@ static int tabla_codec_probe(struct snd_soc_codec *codec)
 
 	tabla->ctrl_data->codec = codec;
 	tabla->ctrl_data->name = codec->name;
-	tabla->ctrl_data->codec_read = &tabla_read;
-	tabla->ctrl_data->codec_write = &tabla_write;
+	tabla->ctrl_data->read = &tabla_read;
+	tabla->ctrl_data->write = &tabla_write;
 	tabla->ctrl_data->flags = SND_CTRL_BYPASS_IOCTL;
 
 	ret = snd_ctrl_register(tabla->ctrl_data);
