@@ -1,241 +1,328 @@
 /*
- * ASUS Lid driver.
+ * Copyright (C) 2013, ASUSTek Computer Inc.
+ * Copyright (C) 2018, The Linux Foundation. All rights reserved.
+ *
+ * This software is licensed under the terms of the GNU General Public
+ * License version 2, as published by the Free Software Foundation, and
+ * may be copied, distributed, and modified under those terms.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
-#include <linux/module.h>
-#include <linux/err.h>
-#include <linux/delay.h>
-#include <linux/interrupt.h>
-#include <linux/init.h>
-#include <linux/input.h>
-#include <linux/platform_device.h>
-#include <linux/workqueue.h>
-#include <linux/gpio_event.h>
+
+#define ASUS_LID	"asustek_lid"
+#define pr_fmt(fmt)	ASUS_LID ": %s: " fmt, __func__
+
 #include <linux/gpio.h>
+#include <linux/input.h>
+#include <linux/module.h>
+#include <linux/platform_device.h>
 
-#define LID_DEBUG		0
-#define CONVERSION_TIME_MS	50
+/* LID input device configuration */
+#define LID_NAME	"lid_input"
+#define LID_PHYS	"/dev/input/lid_indev"
 
-#if LID_DEBUG
-#define LID_INFO(format, arg...) \
-	pr_info("hall_sensor: [%s] " format , __func__ , ##arg)
-#else
-#define LID_INFO(format, arg...) do { } while (0)
-#endif
+/* LID device GPIO number */
+#define LID_GPIO	(36)
 
-#define LID_NOTICE(format, arg...)	\
-	pr_notice("hall_sensor: [%s] " format , __func__ , ##arg)
+/* Time in milliseconds to sleep before getting the state of the GPIO above */
+#define LID_DELAY	(50)
 
-#define LID_ERR(format, arg...)	\
-	pr_err("hall_sensor: [%s] " format , __func__ , ##arg)
+/* Internal LID device data */
+struct lid_data {
+	/* LID input device structure */
+	struct input_dev *idev;
 
-struct delayed_work lid_hall_sensor_work;
+	/* A work used to report GPIO state to the LID device */
+	struct delayed_work report;
 
-/*
- * functions declaration
+	/* Current state of a LID device */
+	unsigned int status:1;
+
+	/* GPIO identificator assosiated with LID device */
+	unsigned int gpio;
+
+	/* Interrupt request assosiated with LID device */
+	unsigned int irq;
+
+	/* Delay in milliseconds to sleep before the report of a LID input */
+	unsigned int delay;
+};
+
+/* Global pointer to LID device data */
+static struct lid_data *data;
+
+/* A switch to enable the handling of interrupts for LID device */
+static unsigned int __read_mostly enable_lid = 1;
+module_param(enable_lid, uint, 0644);
+
+/**
+ * lid_report() - main function of a LID driver.
+ * @work: pointer to a work structure.
+ *
+ * This work reports the changed GPIO state to the LID device.
+ * Following actions will be taken by the LID device's firmware itself.
  */
-static void lid_report_function(struct work_struct *dat);
-static int lid_input_device_create(void);
-static ssize_t show_lid_status(struct device *class,
-		struct device_attribute *attr, char *buf);
-/*
- * global variable
- */
-static unsigned int hall_sensor_gpio = 36;
-static int hall_sensor_irq;
-static struct workqueue_struct *lid_wq;
-static struct input_dev	 *lid_indev;
-static DEVICE_ATTR(lid_status, S_IWUSR | S_IRUGO, show_lid_status, NULL);
+static void lid_report(struct work_struct *work)
+{
+	/* Save new GPIO state */
+	data->status = !gpio_get_value(data->gpio);
 
-/* Attribute Descriptor */
+	/* Report the changed state to the LID device */
+	input_report_switch(data->idev, SW_LID, data->status);
+	input_sync(data->idev);
+}
+
+/**
+ * lid_interrupt_handler() - handle a LID interrupt.
+ * @irq: number of a waiting-to-be-handled interrupt.
+ * @dev_id: cookie assosiated with @irq. Unused as we have global data.
+ *
+ * Queues lid_report() after "delay" milliseconds if a specified IRQ is the
+ * one assigned to the LID device.  lid_report() will report the GPIO state
+ * change due to an interrupt to the LID driver.
+ */
+static irqreturn_t lid_interrupt_handler(int irq, void *dev_id)
+{
+	if (enable_lid && irq == data->irq)
+		schedule_delayed_work(&data->report,
+				      msecs_to_jiffies(data->delay));
+
+	return IRQ_HANDLED;
+}
+
+/**
+ * lid_create_device() - create a LID input device.
+ * @idev: pointer to a LID input device.
+ * @name: name of a LID input device.
+ * @phys: phandle to a LID input device.
+ *
+ * Tries to allocate memory for input device and set up its configuration
+ * according to the requirements for LID input device. This function also
+ * tries to register a freshly created device, thus it creates a completely
+ * work-ready input device as a result.
+ *
+ * If an input device was allocated by this function, lid_destroy_device()
+ * should be used to remove it and free the memory occupied by it.
+ */
+static inline int
+lid_create_device(struct input_dev *idev, const char *name, const char *phys)
+{
+	int ret;
+
+	/* Allocate general purpose input device */
+	idev = input_allocate_device();
+	if (IS_ERR_OR_NULL(idev))
+		return -ENOMEM;
+
+	/* Assign provided data to that device */
+	idev->name = name;
+	idev->phys = phys;
+
+	/* Set bits appropriate for LID device */
+	set_bit(EV_SW, idev->evbit);
+	set_bit(SW_LID, idev->swbit);
+
+	ret = input_register_device(idev);
+	if (IS_ERR_VALUE(ret)) {
+		input_free_device(idev);
+		idev = NULL;
+	}
+
+	return ret;
+}
+
+/**
+ * lid_destroy_device() - destroy a LID input device.
+ * @dev: pointer to a LID input device.
+ *
+ * Tries to destroy a passed input device. Note that input device must be
+ * unused at the moment of the destruction.  Otherwise, unexpected things
+ * might happen.
+ */
+static inline void lid_destroy_device(struct input_dev *dev)
+{
+	/* Return early if an input device does not exist */
+	if (IS_ERR_OR_NULL(dev))
+		return;
+
+	input_unregister_device(dev);
+	input_free_device(dev);
+}
+
+/**
+ * lid_request_irq() - request an interrupt for the GPIO.
+ * @gpio: number of GPIO.
+ *
+ * Tries to convert a passed @gpio to an interrupt and request it from any
+ * context.
+ */
+static inline int lid_request_irq(unsigned int gpio)
+{
+	unsigned long irqflags = IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING;
+	int irq;
+
+	/* Convert a passed GPIO to interrupt request */
+	irq = gpio_to_irq(gpio);
+	if (IS_ERR_VALUE(irq))
+		return -EINVAL;
+
+	/* Save the converted value in the driver */
+	data->irq = irq;
+
+	return request_any_context_irq(irq, lid_interrupt_handler,
+				       irqflags, "hall_sensor", NULL);
+}
+
+#define show_one(name)						\
+static ssize_t show_##name(struct device *dev,			\
+			   struct device_attribute *attr,	\
+			   char *buf)				\
+{								\
+	return scnprintf(buf, 12, "%u\n", data->name);		\
+}
+
+#define store_one(name, min, max)				\
+static ssize_t store_##name(struct device *dev,			\
+			    struct device_attribute *attr,	\
+			    const char *buf, size_t count)	\
+{								\
+	int ret;						\
+	unsigned int val;					\
+								\
+	ret = kstrtouint(buf, 10, &val);			\
+	if (ret || val < min || val > max)			\
+		return -EINVAL;					\
+								\
+	data->name = val;					\
+								\
+	return count;						\
+}
+
+#define create_one_rw(name)					\
+static DEVICE_ATTR(lid_##name, 0644, show_##name, store_##name)
+
+#define create_one_ro(name)					\
+static DEVICE_ATTR(lid_##name, 0444, show_##name, NULL)
+
+#define define_one_rw(name, min, max)				\
+show_one(name);							\
+store_one(name, min, max);					\
+create_one_rw(name)
+
+#define define_one_ro(name)					\
+show_one(name);							\
+create_one_ro(name)
+
+define_one_rw(delay, 0, 1000);
+define_one_ro(status);
+define_one_ro(gpio);
+define_one_ro(irq);
+
 static struct attribute *lid_attrs[] = {
 	&dev_attr_lid_status.attr,
+	&dev_attr_lid_delay.attr,
+	&dev_attr_lid_gpio.attr,
+	&dev_attr_lid_irq.attr,
 	NULL
 };
 
-/* Attribute group */
 static struct attribute_group lid_attr_group = {
 	.attrs = lid_attrs,
 };
 
-static ssize_t show_lid_status(struct device *class,
-		struct device_attribute *attr, char *buf)
+static int __devinit lid_probe(struct platform_device *pdev)
 {
-	char *s = buf;
+	int ret;
 
-	s += sprintf(buf, "%u\n",
-		gpio_get_value(hall_sensor_gpio) ? 1 : 0);
-
-	return s - buf;
-}
-
-static irqreturn_t lid_interrupt_handler(int irq, void *dev_id)
-{
-	if (irq == hall_sensor_irq) {
-		LID_NOTICE("LID interrupt handler...gpio: %d..\n",
-			gpio_get_value(hall_sensor_gpio));
-		queue_delayed_work(lid_wq, &lid_hall_sensor_work, 0);
-	}
-	return IRQ_HANDLED;
-}
-
-static void lid_report_function(struct work_struct *dat)
-{
-	int value = 0;
-
-	if (!lid_indev) {
-		LID_ERR("LID input device doesn't exist\n");
-		return;
+	/* Allocate LID device data and set up default values */
+	data = devm_kzalloc(&pdev->dev, sizeof(*data), GFP_KERNEL);
+	if (IS_ERR_OR_NULL(data)) {
+		pr_err("Unable to allocate memory for LID device data\n");
+		return -ENOMEM;
 	}
 
-	msleep(CONVERSION_TIME_MS);
-	value = gpio_get_value(hall_sensor_gpio) ? 1 : 0;
-	input_report_switch(lid_indev, SW_LID, !value);
-	input_sync(lid_indev);
+	platform_set_drvdata(pdev, data);
 
-	LID_NOTICE("SW_LID report value = %d\n", value);
-}
+	data->gpio = LID_GPIO;
+	data->delay = LID_DELAY;
 
-static int lid_input_device_create(void){
-	int err = 0;
-
-	lid_indev = input_allocate_device();
-	if (!lid_indev) {
-		LID_ERR("lid_indev allocation fails\n");
-		err = -ENOMEM;
-		goto exit;
+	/* Try to create LID input device */
+	ret = lid_create_device(data->idev, LID_NAME, LID_PHYS);
+	if (IS_ERR_VALUE(ret)) {
+		pr_err("Unable to allocate LID input device\n");
+		goto fail_create;
 	}
 
-	lid_indev->name = "lid_input";
-	lid_indev->phys = "/dev/input/lid_indev";
-
-	set_bit(EV_SW, lid_indev->evbit);
-	set_bit(SW_LID, lid_indev->swbit);
-
-	err = input_register_device(lid_indev);
-	if (err) {
-		LID_ERR("lid_indev registration fails\n");
-		goto exit_input_free;
+	/* Try to request a GPIO assosiated with the LID device */
+	ret = gpio_request_one(data->gpio, GPIOF_DIR_IN, "LID");
+	if (IS_ERR_VALUE(ret)) {
+		pr_err("Unable to request a GPIO number %u\n", data->gpio);
+		goto fail_gpio;
 	}
-	return 0;
 
-exit_input_free:
-	input_free_device(lid_indev);
-	lid_indev = NULL;
-exit:
-	return err;
+	/* All the required data is initialized; we can finally init the work */
+	INIT_DEFERRABLE_WORK(&data->report, lid_report);
 
-}
-
-static int __init lid_driver_probe(struct platform_device *pdev)
-{
-	int ret = 0, irq = 0;
-	unsigned long irqflags;
-
-	if (!pdev)
-		return -EINVAL;
-
-	pr_info("ASUSTek: %s", __func__);
+	/* Try to request an IRQ for the LID device */
+	ret = lid_request_irq(data->gpio);
+	if (IS_ERR_VALUE(ret)) {
+		pr_err("Unable to request an IRQ for the LID device\n");
+		goto fail_irq;
+	}
 
 	ret = sysfs_create_group(&pdev->dev.kobj, &lid_attr_group);
-
-	if (ret) {
-		LID_ERR("Unable to create sysfs, error: %d\n",
-				ret);
+	if (IS_ERR_VALUE(ret)) {
+		pr_err("Unable to create sysfs group\n");
 		goto fail_sysfs;
 	}
 
-	ret = lid_input_device_create();
-	if (ret) {
-		LID_ERR(
-		"Unable to register input device, error: %d\n",
-			ret);
-		goto fail_create;
-	}
-
-	lid_wq = create_singlethread_workqueue("lid_wq");
-	if(!lid_wq){
-		LID_ERR("Unable to create workqueue\n");
-		goto fail_create;
-	}
-
-	if (!gpio_is_valid(hall_sensor_gpio)) {
-		LID_ERR("Invalid GPIO %d\n", hall_sensor_gpio);
-		goto fail_create;
-	}
-
-	ret = gpio_request(hall_sensor_gpio, "LID");
-	if (ret < 0) {
-		LID_ERR("Failed to request GPIO %d\n",
-				hall_sensor_gpio);
-		goto fail_create;
-	}
-
-	ret = gpio_direction_input(hall_sensor_gpio);
-	if (ret < 0) {
-		LID_ERR(
-		"Failed to configure direction for GPIO %d\n",
-			hall_sensor_gpio);
-		goto fail_free;
-	}
-
-	irq = gpio_to_irq(hall_sensor_gpio);
-	hall_sensor_irq = irq;
-	if (irq < 0) {
-		LID_ERR("Unable to get irq number for GPIO %d\n",
-				hall_sensor_gpio);
-		goto fail_free;
-	}
-
-	irqflags = IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING;
-	ret = request_any_context_irq(irq, lid_interrupt_handler,
-					irqflags, "hall_sensor",
-					lid_indev);
-
-	if (ret < 0) {
-		LID_ERR("Unable to claim irq %d\n", irq);
-		goto fail_free;
-	}
 	device_init_wakeup(&pdev->dev, 1);
-	enable_irq_wake(irq);
+	enable_irq_wake(data->irq);
 
-	INIT_DELAYED_WORK_DEFERRABLE(&lid_hall_sensor_work,
-					lid_report_function);
-
-	return ret;
-
-fail_free:
-	gpio_free(hall_sensor_gpio);
-
-fail_create:
-	sysfs_remove_group(&pdev->dev.kobj, &lid_attr_group);
+	return 0;
 
 fail_sysfs:
+	free_irq(data->irq, NULL);
+fail_irq:
+	gpio_free(data->gpio);
+fail_gpio:
+	lid_destroy_device(data->idev);
+fail_create:
+	platform_set_drvdata(pdev, NULL);
+	devm_kfree(&pdev->dev, data);
+
 	return ret;
 }
 
-static int __devexit lid_driver_remove(struct platform_device *pdev)
+static int __devexit lid_remove(struct platform_device *pdev)
 {
-	sysfs_remove_group(&pdev->dev.kobj, &lid_attr_group);
-	free_irq(hall_sensor_irq, NULL);
-	cancel_delayed_work_sync(&lid_hall_sensor_work);
-	if (gpio_is_valid(hall_sensor_gpio))
-		gpio_free(hall_sensor_gpio);
-
-	input_unregister_device(lid_indev);
+	disable_irq_wake(data->irq);
 	device_init_wakeup(&pdev->dev, 0);
+	sysfs_remove_group(&pdev->dev.kobj, &lid_attr_group);
+
+	free_irq(data->irq, NULL);
+	gpio_free(data->gpio);
+
+	lid_destroy_device(data->idev);
+	platform_set_drvdata(pdev, NULL);
 
 	return 0;
 }
 
-static struct platform_driver asustek_lid_driver __refdata = {
-	.probe = lid_driver_probe,
-	.remove = __devexit_p(lid_driver_remove),
+static struct platform_driver lid_driver = {
+	.probe = lid_probe,
+	.remove = __devexit_p(lid_remove),
 	.driver = {
-		.name = "asustek_lid",
+		.name = ASUS_LID,
 		.owner = THIS_MODULE,
 	},
 };
 
-module_platform_driver(asustek_lid_driver);
+module_platform_driver(lid_driver);
+
+MODULE_AUTHOR("ASUSTek Computer Inc.");
 MODULE_DESCRIPTION("Hall Sensor Driver");
-MODULE_LICENSE("GPL");
+MODULE_LICENSE("GPL v2");
