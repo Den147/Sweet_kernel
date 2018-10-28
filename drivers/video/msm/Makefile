@@ -23,6 +23,8 @@ obj-y += mdp_ppp_v20.o
 endif
 endif
 
+obj-$(CONFIG_FB_MSM_MDP4_KCAL_CTRL) += mdp4_kcal_ctrl.o
+
 ifeq ($(CONFIG_FB_MSM_OVERLAY),y)
 obj-y += mdp4_overlay.o
 obj-y += mdp4_overlay_lcdc.o
@@ -177,6 +179,8 @@ obj-$(CONFIG_FB_MSM_EXT_INTERFACE_COMMON) += external_common.o
 obj-$(CONFIG_FB_MSM_LCDC_TRULY_HVGA_IPS3P2335) += lcdc_truly_ips3p2335.o
 
 obj-$(CONFIG_FB_MSM_TVOUT) += tvout_msm.o
+
+obj-$(CONFIG_FB_MSM_KCAL_CTRL) += mdp_kcal_ctrl.o
 
 ccflags-y := -I$(src)/mhl
 obj-$(CONFIG_FB_MSM_HDMI_MHL_8334) += mhl-8334.o
