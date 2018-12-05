@@ -106,11 +106,8 @@ menu "DOS/FAT/NT Filesystems"
 
 source "fs/fat/Kconfig"
 source "fs/exfat/Kconfig"
-<<<<<<< HEAD
 source "fs/ntfs/Kconfig"
-=======
 source "fs/sdfat/Kconfig"
->>>>>>> e2a9df6... fs: Import sdFAR driver
 
 endmenu
 endif # BLOCK
