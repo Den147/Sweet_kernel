@@ -592,8 +592,9 @@ static inline void debug_assert_init(struct timer_list *timer)
 static void do_init_timer(struct timer_list *timer, unsigned int flags,
 			  const char *name, struct lock_class_key *key)
 {
+
 	timer->entry.next = NULL;
-	timer->base = (void *)((unsigned long)base | flags);
+	timer->base = __raw_get_cpu_var(tvec_bases);
 	timer->slack = -1;
 	lockdep_init_map(&timer->lockdep_map, name, key, 0);
 }
@@ -954,7 +955,6 @@ int try_to_del_timer_sync(struct timer_list *timer)
 	base = lock_timer_base(timer, &flags);
 
 	if (base->running_timer != timer) {
-		timer_stats_timer_clear_start_info(timer);
 		ret = detach_if_pending(timer, base, true);
 	}
 	spin_unlock_irqrestore(&base->lock, flags);
