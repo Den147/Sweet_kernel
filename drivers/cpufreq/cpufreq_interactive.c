@@ -53,6 +53,7 @@ struct cpufreq_interactive_cpuinfo {
 	unsigned int floor_freq;
 	unsigned int min_freq;
 	u64 floor_validate_time;
+	u64 local_hvtime; /* per-cpu hispeed_validate_time */
 	u64 hispeed_validate_time;
 	u64 max_freq_hyst_start_time;
 	struct rw_semaphore enable_sem;
