@@ -306,14 +306,14 @@ static int __exfat_revalidate(struct dentry *dentry)
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3,7,00)
 static int exfat_revalidate(struct dentry *dentry, unsigned int flags)
 #else
-static int exfat_revalidate(struct dentry *dentry, struct nameidata *nd)
+static int exfat_revalidate(struct dentry *dentry, unsigned int flags)
 #endif
 {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3,7,00)
 	if (flags & LOOKUP_RCU)
 		return -ECHILD;
 #elif LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,00)
-	if (nd && nd->flags & LOOKUP_RCU)
+	if (flags & LOOKUP_RCU)
 		return -ECHILD;
 #endif
 
@@ -325,21 +325,18 @@ static int exfat_revalidate(struct dentry *dentry, struct nameidata *nd)
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3,7,00)
 static int exfat_revalidate_ci(struct dentry *dentry, unsigned int flags)
 #else
-static int exfat_revalidate_ci(struct dentry *dentry, struct nameidata *nd)
+static int exfat_revalidate_ci(struct dentry *dentry, unsigned int flags)
 #endif
 {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3,7,00)
 	if (flags & LOOKUP_RCU)
 		return -ECHILD;
 #elif LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,00)
-	unsigned int flags;
-
-	if (nd && nd->flags & LOOKUP_RCU)
+	if (flags & LOOKUP_RCU)
 		return -ECHILD;
-
-	flags = nd ? nd->flags : 0;
 #else
-	flags = nd ? nd->flags : 0;
+	if (flags & LOOKUP_RCU)
+		return -ECHILD;
 #endif
 
 	if (dentry->d_inode)
@@ -620,10 +617,10 @@ static int exfat_create(struct inode *dir, struct dentry *dentry, umode_t mode,
 						bool excl)
 #elif LINUX_VERSION_CODE >= KERNEL_VERSION(3,4,00)
 static int exfat_create(struct inode *dir, struct dentry *dentry, umode_t mode,
-						struct nameidata *nd)
+						bool excl)
 #else
-static int exfat_create(struct inode *dir, struct dentry *dentry, int mode,
-						struct nameidata *nd)
+static int exfat_create(struct inode *dir, struct dentry *dentry, umode_t mode,
+						bool excl)
 #endif
 {
 	struct super_block *sb = dir->i_sb;
@@ -704,7 +701,7 @@ static struct dentry *exfat_lookup(struct inode *dir, struct dentry *dentry,
 						   unsigned int flags)
 #else
 static struct dentry *exfat_lookup(struct inode *dir, struct dentry *dentry,
-						   struct nameidata *nd)
+						   unsigned int flags)
 #endif
 {
 	struct super_block *sb = dir->i_sb;
