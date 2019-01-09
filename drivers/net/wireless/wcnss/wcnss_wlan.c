@@ -1568,12 +1568,6 @@ fail_gpio_res:
 
 static int wcnss_node_open(struct inode *inode, struct file *file)
 {
-	return 0;
-}
-
-static ssize_t wcnss_node_write(struct file *file,
-			const char __user *ubuf, size_t count, loff_t *ppos)
-{
 	struct platform_device *pdev;
 	int rc = 0;
 
@@ -1590,7 +1584,6 @@ static ssize_t wcnss_node_write(struct file *file,
 
 	return rc;
 }
-
 static ssize_t wcnss_wlan_read(struct file *fp, char __user
 			*buffer, size_t count, loff_t *position)
 {
