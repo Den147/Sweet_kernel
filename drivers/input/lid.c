@@ -87,7 +87,7 @@ static void lid_report(struct work_struct *work)
 static irqreturn_t lid_interrupt_handler(int irq, void *dev_id)
 {
 	if (enable_lid && irq == data->irq)
-		schedule_delayed_work(&data->report,
+		queue_delayed_work(&data->report,
 				      msecs_to_jiffies(data->delay));
 
 	return IRQ_HANDLED;
@@ -264,7 +264,7 @@ static int __devinit lid_probe(struct platform_device *pdev)
 	}
 
 	/* All the required data is initialized; we can finally init the work */
-	INIT_DEFERRABLE_WORK(&data->report, lid_report);
+	INIT_DELAYED_WORK_DEFERRABLE(&data->report, lid_report);
 
 	/* Try to request an IRQ for the LID device */
 	ret = lid_request_irq(data->gpio);
